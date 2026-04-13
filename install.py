@@ -12,15 +12,20 @@ Usage:
 """
 
 import argparse
+import io
 import os
 import platform
 import shutil
 import subprocess
 import sys
+import zipfile
+from urllib.request import urlopen
+from urllib.error import URLError
 
 
 PLUGIN_NAME = "nukecorridorkeyer"
 CORRIDORKEY_REPO = "https://github.com/nikopueringer/CorridorKey.git"
+CORRIDORKEY_ZIP = "https://github.com/nikopueringer/CorridorKey/archive/refs/heads/main.zip"
 INIT_MARKER = "# --- CorridorKeyer plugin path (auto-added by installer) ---"
 
 
@@ -53,12 +58,54 @@ def find_pip():
     return None
 
 
+def download_corridorkey_zip(target_dir):
+    """Download CorridorKey as a zip archive (no git required)."""
+    print(f"  Downloading CorridorKey zip to {target_dir} ...")
+    try:
+        response = urlopen(CORRIDORKEY_ZIP)
+        zip_data = io.BytesIO(response.read())
+        with zipfile.ZipFile(zip_data) as zf:
+            # The zip contains a top-level folder like "CorridorKey-main/"
+            top_dirs = {name.split("/")[0] for name in zf.namelist() if "/" in name}
+            if len(top_dirs) == 1:
+                zip_root = top_dirs.pop()
+            else:
+                zip_root = None
+
+            os.makedirs(target_dir, exist_ok=True)
+            for member in zf.namelist():
+                # Strip the top-level directory from the zip
+                if zip_root and member.startswith(zip_root + "/"):
+                    rel_path = member[len(zip_root) + 1:]
+                else:
+                    rel_path = member
+                if not rel_path:
+                    continue
+
+                dest = os.path.join(target_dir, rel_path)
+                if member.endswith("/"):
+                    os.makedirs(dest, exist_ok=True)
+                else:
+                    os.makedirs(os.path.dirname(dest), exist_ok=True)
+                    with zf.open(member) as src, open(dest, "wb") as dst:
+                        shutil.copyfileobj(src, dst)
+        return True
+    except (URLError, OSError, zipfile.BadZipFile) as e:
+        print(f"  ERROR: Failed to download zip: {e}")
+        return False
+
+
 def clone_corridorkey(target_dir):
-    """Clone the CorridorKey repo if not already present."""
+    """Clone the CorridorKey repo if not already present. Falls back to zip download."""
     if os.path.isdir(os.path.join(target_dir, ".git")):
         print(f"  CorridorKey already cloned at {target_dir}")
         print("  Pulling latest changes...")
         subprocess.run(["git", "pull"], cwd=target_dir, check=False)
+        return True
+
+    # Check if already downloaded (without .git, e.g. from zip)
+    if os.path.isdir(target_dir) and os.listdir(target_dir):
+        print(f"  CorridorKey already present at {target_dir}")
         return True
 
     print(f"  Cloning CorridorKey to {target_dir} ...")
@@ -69,16 +116,11 @@ def clone_corridorkey(target_dir):
         )
         return True
     except FileNotFoundError:
-        print("  ERROR: 'git' is not installed or not on your PATH.")
-        print("  Install Git from https://git-scm.com/downloads and try again,")
-        print("  or clone manually:")
-        print(f"    git clone {CORRIDORKEY_REPO} {target_dir}")
-        return False
+        print("  git not found, falling back to zip download...")
+        return download_corridorkey_zip(target_dir)
     except subprocess.CalledProcessError as e:
-        print(f"  ERROR: Failed to clone: {e}")
-        print("  You can clone it manually:")
-        print(f"    git clone {CORRIDORKEY_REPO} {target_dir}")
-        return False
+        print(f"  git clone failed ({e}), falling back to zip download...")
+        return download_corridorkey_zip(target_dir)
 
 
 def install_dependencies(corridorkey_dir):
