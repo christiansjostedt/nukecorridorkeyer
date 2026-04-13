@@ -154,7 +154,8 @@ def _get_cache_dir(gizmo):
         return custom.strip()
 
     # Default: next to the nuke script
-    script_dir = os.path.dirname(nuke.root().name()) or "/tmp"
+    import tempfile
+    script_dir = os.path.dirname(nuke.root().name()) or tempfile.gettempdir()
     node_name = gizmo.name()
     return os.path.join(script_dir, "corridor_keyer_cache", node_name)
 

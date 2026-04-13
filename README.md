@@ -5,49 +5,111 @@ Nuke integration for [Corridor Digital's AI green screen keyer](https://github.c
 ## Requirements
 
 - **Nuke** 13+ (Python 3)
-- **CorridorKey** — clone from [github.com/nikopueringer/CorridorKey](https://github.com/nikopueringer/CorridorKey)
-- **PyTorch** 2.8+ with CUDA (or MPS on Apple Silicon)
-- **OpenImageIO** (ships with Nuke) or **OpenCV**
+- **Python** 3.10+ (for CorridorKey)
+- **Git** (for cloning repos)
+- **GPU**: NVIDIA with CUDA (Linux/Windows), Apple Silicon with MPS (macOS), or CPU fallback
 
 ## Installation
 
-### 1. Install CorridorKey
-
-```bash
-git clone https://github.com/nikopueringer/CorridorKey.git
-cd CorridorKey
-pip install -e .
-# or: uv pip install -e .
-```
-
-The model checkpoint (`CorridorKey.pth`) will auto-download from HuggingFace on first run, or you can place it manually in `CorridorKey/models/`.
-
-### 2. Install this plugin
-
-Clone this repo somewhere on disk:
+### Quick install (all platforms)
 
 ```bash
 git clone https://github.com/christiansjostedt/nukecorridorkeyer.git
+cd nukecorridorkeyer
+python install.py
 ```
 
-Add the plugin path to your `~/.nuke/init.py`:
+The installer will:
+1. Clone the CorridorKey repo (if not already present)
+2. Install Python dependencies (PyTorch, timm, etc.)
+3. Add the plugin to your `~/.nuke/init.py`
 
-```python
-import os
-nuke.pluginAddPath("/path/to/nukecorridorkeyer")
+The model checkpoint (`CorridorKey.pth`, ~300 MB) auto-downloads from HuggingFace on first use.
 
-# Tell the plugin where CorridorKey lives:
-os.environ["CORRIDORKEY_PATH"] = "/path/to/CorridorKey"
-```
-
-Or set the environment variables before launching Nuke:
+### Install options
 
 ```bash
-export CORRIDORKEY_PATH="/path/to/CorridorKey"
-export NUKE_PATH="/path/to/nukecorridorkeyer:$NUKE_PATH"
+# Point to an existing CorridorKey clone
+python install.py --corridorkey /path/to/CorridorKey
+
+# Use a custom .nuke directory
+python install.py --nuke-dir /studio/nuke_config
+
+# Skip dependency install (if you manage deps yourself)
+python install.py --skip-deps
+
+# Uninstall (removes entry from init.py, keeps files)
+python install.py --uninstall
 ```
 
-### 3. Verify
+### Manual install
+
+If you prefer to set things up by hand:
+
+<details>
+<summary>macOS</summary>
+
+```bash
+# Clone repos
+git clone https://github.com/nikopueringer/CorridorKey.git
+git clone https://github.com/christiansjostedt/nukecorridorkeyer.git
+
+# Install dependencies
+cd CorridorKey && pip3 install -e . && cd ..
+
+# Add to Nuke — edit ~/.nuke/init.py
+echo 'import os' >> ~/.nuke/init.py
+echo 'os.environ["CORRIDORKEY_PATH"] = "/path/to/CorridorKey"' >> ~/.nuke/init.py
+echo 'nuke.pluginAddPath("/path/to/nukecorridorkeyer")' >> ~/.nuke/init.py
+```
+
+Apple Silicon Macs use MPS (Metal) automatically. Force CPU with `CORRIDORKEY_DEVICE=cpu` if you hit MPS issues.
+</details>
+
+<details>
+<summary>Linux</summary>
+
+```bash
+# Clone repos
+git clone https://github.com/nikopueringer/CorridorKey.git
+git clone https://github.com/christiansjostedt/nukecorridorkeyer.git
+
+# Install dependencies
+cd CorridorKey && pip install -e . && cd ..
+
+# Add to Nuke — edit ~/.nuke/init.py
+echo 'import os' >> ~/.nuke/init.py
+echo 'os.environ["CORRIDORKEY_PATH"] = "/path/to/CorridorKey"' >> ~/.nuke/init.py
+echo 'nuke.pluginAddPath("/path/to/nukecorridorkeyer")' >> ~/.nuke/init.py
+```
+
+CUDA is auto-detected for NVIDIA GPUs. Ensure your PyTorch install matches your CUDA version.
+</details>
+
+<details>
+<summary>Windows</summary>
+
+```powershell
+# Clone repos
+git clone https://github.com/nikopueringer/CorridorKey.git
+git clone https://github.com/christiansjostedt/nukecorridorkeyer.git
+
+# Install dependencies
+cd CorridorKey
+pip install -e .
+cd ..
+
+# Add to Nuke — edit %USERPROFILE%\.nuke\init.py
+# Add these lines:
+#   import os
+#   os.environ["CORRIDORKEY_PATH"] = r"C:\path\to\CorridorKey"
+#   nuke.pluginAddPath(r"C:\path\to\nukecorridorkeyer")
+```
+
+If Nuke's Python can't find `torch`, add your Python `site-packages` to the `PYTHONPATH` environment variable before launching Nuke.
+</details>
+
+### Verify
 
 Launch Nuke. You should see **CorridorKeyer** in the toolbar and under the Keyer menu.
 
@@ -94,6 +156,15 @@ Processed frames are cached both in memory (for live scrubbing) and as EXR seque
 
 The model uses ~6-8 GB VRAM. Click **Release GPU Memory** when you're done processing to free it for other tools.
 
+## Platform notes
+
+| Platform | GPU | Notes |
+|----------|-----|-------|
+| **Linux** | NVIDIA (CUDA) | Best performance. Ensure PyTorch CUDA version matches driver. |
+| **macOS** | Apple Silicon (MPS) | Auto-detected on M1+. Set `CORRIDORKEY_DEVICE=cpu` as fallback. |
+| **Windows** | NVIDIA (CUDA) | May need `PYTHONPATH` set so Nuke finds torch. |
+| **Any** | CPU | Works but slow. Force with `CORRIDORKEY_DEVICE=cpu`. |
+
 ## Environment Variables
 
 | Variable | Description |
@@ -106,6 +177,7 @@ The model uses ~6-8 GB VRAM. Click **Release GPU Memory** when you're done proce
 
 ```
 nukecorridorkeyer/
+├── install.py               # Cross-platform installer
 ├── init.py                  # Nuke plugin bootstrapping
 ├── menu.py                  # Toolbar and menu entries
 ├── corridor_keyer/
