@@ -134,6 +134,24 @@ def clone_corridorkey(target_dir):
         return download_corridorkey_zip(target_dir)
 
 
+def get_site_packages_dirs():
+    """Return site-packages directories where pip installs packages."""
+    dirs = []
+    try:
+        import site
+        # User site-packages (where --user installs go)
+        user_site = site.getusersitepackages()
+        if user_site and os.path.isdir(user_site):
+            dirs.append(user_site)
+        # Global site-packages
+        for d in site.getsitepackages():
+            if os.path.isdir(d):
+                dirs.append(d)
+    except Exception:
+        pass
+    return dirs
+
+
 def install_dependencies(corridorkey_dir):
     """Install CorridorKey's Python dependencies."""
     pip = find_pip()
@@ -172,7 +190,7 @@ def patch_nuke_init(nuke_dir, plugin_dir, corridorkey_dir):
             if skip and line.strip() == "":
                 skip = False
                 continue
-            if skip and (line.startswith("import ") or line.startswith("os.") or line.startswith("nuke.")):
+            if skip and (line.startswith("import ") or line.startswith("os.") or line.startswith("nuke.") or line.startswith("if r\"") or line.startswith("    sys.path")):
                 continue
             skip = False
             new_lines.append(line)
@@ -182,10 +200,20 @@ def patch_nuke_init(nuke_dir, plugin_dir, corridorkey_dir):
     plugin_dir_escaped = plugin_dir.replace("\\", "/")
     corridorkey_dir_escaped = corridorkey_dir.replace("\\", "/")
 
+    # Build sys.path lines for site-packages so Nuke can find numpy, torch, etc.
+    site_packages = get_site_packages_dirs()
+    site_lines = ""
+    if site_packages:
+        site_lines = "import sys\n"
+        for sp in site_packages:
+            sp_escaped = sp.replace("\\", "/")
+            site_lines += f'if r"{sp_escaped}" not in sys.path:\n'
+            site_lines += f'    sys.path.append(r"{sp_escaped}")\n'
+
     block = f"""
 {INIT_MARKER}
 import os
-os.environ["CORRIDORKEY_PATH"] = r"{corridorkey_dir_escaped}"
+{site_lines}os.environ["CORRIDORKEY_PATH"] = r"{corridorkey_dir_escaped}"
 nuke.pluginAddPath(r"{plugin_dir_escaped}")
 """
 
