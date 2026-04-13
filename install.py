@@ -68,7 +68,13 @@ def clone_corridorkey(target_dir):
             check=True,
         )
         return True
-    except (subprocess.CalledProcessError, FileNotFoundError) as e:
+    except FileNotFoundError:
+        print("  ERROR: 'git' is not installed or not on your PATH.")
+        print("  Install Git from https://git-scm.com/downloads and try again,")
+        print("  or clone manually:")
+        print(f"    git clone {CORRIDORKEY_REPO} {target_dir}")
+        return False
+    except subprocess.CalledProcessError as e:
         print(f"  ERROR: Failed to clone: {e}")
         print("  You can clone it manually:")
         print(f"    git clone {CORRIDORKEY_REPO} {target_dir}")
@@ -238,6 +244,7 @@ def main():
 
     # 1. Locate or clone CorridorKey
     corridorkey_dir = args.corridorkey
+    clone_ok = True
     if corridorkey_dir:
         corridorkey_dir = os.path.abspath(corridorkey_dir)
         if not os.path.isdir(corridorkey_dir):
@@ -246,10 +253,12 @@ def main():
     else:
         corridorkey_dir = get_default_corridorkey_dir()
         print(f"\n[1/3] CorridorKey repository")
-        clone_corridorkey(corridorkey_dir)
+        clone_ok = clone_corridorkey(corridorkey_dir)
 
     # 2. Install dependencies
-    if not args.skip_deps:
+    if not clone_ok:
+        print(f"\n[2/3] Skipping dependency install (CorridorKey not available)")
+    elif not args.skip_deps:
         print(f"\n[2/3] Python dependencies")
         install_dependencies(corridorkey_dir)
     else:
@@ -259,6 +268,19 @@ def main():
     print(f"\n[3/3] Configuring Nuke ({nuke_dir})")
     os.makedirs(nuke_dir, exist_ok=True)
     patch_nuke_init(nuke_dir, plugin_dir, corridorkey_dir)
+
+    if not clone_ok:
+        print("\n" + "=" * 60)
+        print("  CorridorKeyer partially installed.")
+        print("=" * 60)
+        print(f"\n  Nuke config was updated, but CorridorKey could not be cloned.")
+        print(f"  Make sure 'git' is installed and on your PATH, then either:")
+        print(f"    1. Re-run this installer")
+        print(f"    2. Clone manually and re-run with --corridorkey <path>:")
+        print(f"       git clone {CORRIDORKEY_REPO} {corridorkey_dir}")
+        print(f"       python install.py --corridorkey {corridorkey_dir}")
+        print()
+        sys.exit(1)
 
     print_summary(plugin_dir, corridorkey_dir, nuke_dir)
 
