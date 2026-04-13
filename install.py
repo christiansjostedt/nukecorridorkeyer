@@ -18,6 +18,7 @@ import platform
 import shutil
 import subprocess
 import sys
+import ssl
 import zipfile
 from urllib.request import urlopen
 from urllib.error import URLError
@@ -62,7 +63,17 @@ def download_corridorkey_zip(target_dir):
     """Download CorridorKey as a zip archive (no git required)."""
     print(f"  Downloading CorridorKey zip to {target_dir} ...")
     try:
-        response = urlopen(CORRIDORKEY_ZIP)
+        try:
+            response = urlopen(CORRIDORKEY_ZIP)
+        except URLError as ssl_err:
+            if "CERTIFICATE_VERIFY_FAILED" in str(ssl_err):
+                print("  SSL verification failed, retrying without verification...")
+                ctx = ssl.create_default_context()
+                ctx.check_hostname = False
+                ctx.verify_mode = ssl.CERT_NONE
+                response = urlopen(CORRIDORKEY_ZIP, context=ctx)
+            else:
+                raise
         zip_data = io.BytesIO(response.read())
         with zipfile.ZipFile(zip_data) as zf:
             # The zip contains a top-level folder like "CorridorKey-main/"
