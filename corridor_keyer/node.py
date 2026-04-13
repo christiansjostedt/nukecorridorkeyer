@@ -21,6 +21,17 @@ from . import engine
 
 
 # ---------------------------------------------------------------------------
+# In-memory frame cache for live preview
+# ---------------------------------------------------------------------------
+
+# { gizmo_name: { frame_int: { "fg": np, "alpha": np, "processed": np } } }
+_frame_cache = {}
+_live_nodes = set()  # names of gizmos with Live mode enabled
+_last_live_frame = {}  # { gizmo_name: last_processed_frame }
+_live_processing = False  # guard against re-entrant processing
+
+
+# ---------------------------------------------------------------------------
 # Pixel I/O helpers
 # ---------------------------------------------------------------------------
 
@@ -329,3 +340,210 @@ def release_gpu():
     """Free GPU memory held by the engine."""
     engine.release_engine()
     nuke.message("CorridorKeyer: GPU memory released.")
+
+
+# ---------------------------------------------------------------------------
+# Single-frame processing (current frame)
+# ---------------------------------------------------------------------------
+
+def _process_single_frame(gizmo, frame):
+    """
+    Process a single frame and write to cache.
+    Returns the result dict or None on failure.
+    """
+    plate_input = gizmo.input(0)
+    hint_input = gizmo.input(1)
+
+    if plate_input is None or hint_input is None:
+        return None
+
+    input_linear = gizmo.knob("input_colorspace").value() == "Linear"
+
+    rgb = _read_input_rgb(plate_input, frame)
+    alpha_hint = _read_input_alpha(hint_input, frame)
+
+    if rgb is None or alpha_hint is None:
+        return None
+
+    # Resize alpha hint to match plate if needed
+    if alpha_hint.shape[:2] != rgb.shape[:2]:
+        import cv2
+        alpha_hint = cv2.resize(
+            alpha_hint, (rgb.shape[1], rgb.shape[0]),
+            interpolation=cv2.INTER_LANCZOS4,
+        )
+
+    result = engine.process_frame(rgb, alpha_hint, input_is_linear=input_linear)
+    return result
+
+
+def process_current_frame(gizmo):
+    """
+    Process only the current viewer frame and write to disk cache.
+    Called from the 'Process Current Frame' button.
+    """
+    plate_input = gizmo.input(0)
+    hint_input = gizmo.input(1)
+
+    if plate_input is None:
+        nuke.message("CorridorKeyer: Connect a plate to input 1 (left).")
+        return
+    if hint_input is None:
+        nuke.message(
+            "CorridorKeyer: Connect a coarse alpha/matte to input 2 (right).\n"
+            "Tip: Use a Keylight, Primatte, or IBKGizmo for a rough key."
+        )
+        return
+
+    frame = nuke.frame()
+    cache_dir = _get_cache_dir(gizmo)
+
+    task = nuke.ProgressTask("CorridorKeyer")
+    task.setMessage("Processing frame %d" % frame)
+    task.setProgress(0)
+
+    try:
+        result = _process_single_frame(gizmo, frame)
+        if result is None:
+            nuke.message("CorridorKeyer: Failed to process frame %d." % frame)
+            return
+
+        # Write to disk
+        frame_str = "%04d" % frame
+        _write_exr(
+            os.path.join(cache_dir, "FG", "fg.%s.exr" % frame_str),
+            result["fg"], ["R", "G", "B"],
+        )
+        _write_exr(
+            os.path.join(cache_dir, "Matte", "matte.%s.exr" % frame_str),
+            result["alpha"], ["A"],
+        )
+        _write_exr(
+            os.path.join(cache_dir, "Processed", "processed.%s.exr" % frame_str),
+            result["processed"], ["R", "G", "B", "A"],
+        )
+
+        # Store in memory cache
+        node_name = gizmo.name()
+        if node_name not in _frame_cache:
+            _frame_cache[node_name] = {}
+        _frame_cache[node_name][frame] = result
+
+        # Update read nodes to point at cache
+        _update_read_nodes(gizmo, cache_dir, frame, frame)
+
+        task.setProgress(100)
+    finally:
+        del task
+
+
+# ---------------------------------------------------------------------------
+# Live preview mode
+# ---------------------------------------------------------------------------
+
+def _live_update_callback():
+    """
+    Called by nuke.addUpdateUI on every viewer refresh.
+    Checks if the frame changed for any live-enabled gizmo and processes it.
+    """
+    global _live_processing
+
+    if _live_processing:
+        return
+    if not _live_nodes:
+        return
+
+    frame = nuke.frame()
+
+    for node_name in list(_live_nodes):
+        gizmo = nuke.toNode(node_name)
+        if gizmo is None:
+            _live_nodes.discard(node_name)
+            continue
+
+        last = _last_live_frame.get(node_name)
+        if last == frame:
+            continue  # already processed this frame
+
+        # Check memory cache first
+        cached = _frame_cache.get(node_name, {}).get(frame)
+        if cached is not None:
+            _last_live_frame[node_name] = frame
+            # Result already on disk from prior processing, just update reads
+            cache_dir = _get_cache_dir(gizmo)
+            _update_read_nodes(gizmo, cache_dir, frame, frame)
+            continue
+
+        # Need to process — do it
+        _live_processing = True
+        try:
+            result = _process_single_frame(gizmo, frame)
+            if result is None:
+                continue
+
+            cache_dir = _get_cache_dir(gizmo)
+            frame_str = "%04d" % frame
+            _write_exr(
+                os.path.join(cache_dir, "FG", "fg.%s.exr" % frame_str),
+                result["fg"], ["R", "G", "B"],
+            )
+            _write_exr(
+                os.path.join(cache_dir, "Matte", "matte.%s.exr" % frame_str),
+                result["alpha"], ["A"],
+            )
+            _write_exr(
+                os.path.join(cache_dir, "Processed", "processed.%s.exr" % frame_str),
+                result["processed"], ["R", "G", "B", "A"],
+            )
+
+            if node_name not in _frame_cache:
+                _frame_cache[node_name] = {}
+            _frame_cache[node_name][frame] = result
+            _last_live_frame[node_name] = frame
+
+            _update_read_nodes(gizmo, cache_dir, frame, frame)
+
+        except Exception as e:
+            nuke.warning("CorridorKeyer Live: %s" % str(e))
+        finally:
+            _live_processing = False
+
+
+_live_callback_registered = False
+
+
+def toggle_live(gizmo):
+    """Toggle live preview mode for this gizmo."""
+    global _live_callback_registered
+
+    node_name = gizmo.name()
+    is_live = gizmo.knob("live_preview").value()
+
+    if is_live:
+        # Validate inputs before enabling
+        if gizmo.input(0) is None or gizmo.input(1) is None:
+            gizmo.knob("live_preview").setValue(False)
+            nuke.message(
+                "CorridorKeyer: Connect both inputs before enabling Live mode."
+            )
+            return
+
+        _live_nodes.add(node_name)
+
+        # Register the updateUI callback once
+        if not _live_callback_registered:
+            nuke.addUpdateUI(_live_update_callback)
+            _live_callback_registered = True
+
+        # Process current frame immediately
+        process_current_frame(gizmo)
+    else:
+        _live_nodes.discard(node_name)
+        _last_live_frame.pop(node_name, None)
+
+
+def clear_memory_cache(gizmo):
+    """Clear the in-memory frame cache for this gizmo."""
+    node_name = gizmo.name()
+    _frame_cache.pop(node_name, None)
+    _last_live_frame.pop(node_name, None)

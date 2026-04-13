@@ -58,7 +58,10 @@ Launch Nuke. You should see **CorridorKeyer** in the toolbar and under the Keyer
    - **Input 1 (left)** — Your green screen plate
    - **Input 2 (right)** — A coarse alpha hint (rough matte from Keylight, Primatte, IBKGizmo, or any roto)
 3. **Set the frame range** and colorspace (Linear for EXR, sRGB for jpg/png plates)
-4. **Click "Process Frames"** — runs inference and caches EXR results to disk
+4. **Get instant feedback:**
+   - **"Process Current Frame"** — processes just the frame you're looking at
+   - **"Enable Live"** — auto-processes whenever you scrub to a new frame. Already-processed frames are cached in memory for instant playback
+   - **"Process Frames"** — batch-process the full frame range
 5. **Select output** — Switch between Processed (RGBA), Foreground, Matte, or Passthrough
 
 ### Generating a good alpha hint
@@ -79,9 +82,13 @@ The alpha hint doesn't need to be perfect — that's the whole point. A quick Ke
 | **Matte (Alpha)** | Clean linear alpha channel |
 | **Plate (Passthrough)** | The original plate, unmodified |
 
+### Live preview
+
+Toggle **"Enable Live"** to automatically key whatever frame you scrub to. The first hit on a new frame takes a moment (inference), but every frame you've already visited is cached in memory and displays instantly. This lets you scrub through a shot and build up a cached preview as you go.
+
 ### Cache management
 
-Processed frames are cached as EXR sequences next to your Nuke script (or in a custom directory you specify). Use **Clear Cache** to free disk space when done.
+Processed frames are cached both in memory (for live scrubbing) and as EXR sequences on disk next to your Nuke script (or in a custom directory). Use **Clear Cache** to free disk space when done.
 
 ### GPU memory
 

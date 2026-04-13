@@ -4,6 +4,8 @@ Gizmo {
  note_font "Verdana Bold"
  help "CorridorKeyer\n\nAI-powered green screen keyer by Corridor Digital.\nProduces physically accurate foreground colour reconstruction\nand clean linear alpha.\n\nInputs:\n  1 (left) - Plate: Your green screen footage\n  2 (right) - Alpha Hint: A coarse matte (from Keylight, Primatte, IBK, etc.)\n\nOutputs:\n  Foreground: Use the 'output' dropdown to select FG, Matte, or Processed."
 
+ knobChanged "if nuke.thisKnob().name() == 'live_preview':\n    from corridor_keyer import node as ck_node\n    ck_node.toggle_live(nuke.thisNode())"
+
  addUserKnob {20 CorridorKeyer l "Corridor Keyer"}
 
  addUserKnob {26 title l "" +STARTLINE T "<font size='5' color='#4b8c3a'><b>Corridor Keyer</b></font>  <font size='2' color='#888'>v0.1.0</font>"}
@@ -39,6 +41,15 @@ Gizmo {
  addUserKnob {20 cache_grp_end l "" n -1}
 
  addUserKnob {26 div3 l "" +STARTLINE}
+
+ addUserKnob {26 live_title l "" +STARTLINE T "<font size='3' color='#4b8c3a'><b>Live Preview</b></font>"}
+ addUserKnob {6 live_preview l "Enable Live" t "When enabled, automatically processes the current frame whenever you scrub the timeline. Already-processed frames are cached in memory for instant playback." +STARTLINE}
+ live_preview false
+ addUserKnob {22 btn_toggle_live l "" T "from corridor_keyer import node as ck_node\nck_node.toggle_live(nuke.thisNode())" +INVISIBLE}
+
+ addUserKnob {26 div3b l "" +STARTLINE}
+
+ addUserKnob {22 btn_process_current l "Process Current Frame" T "from corridor_keyer import node as ck_node\nck_node.process_current_frame(nuke.thisNode())" +STARTLINE}
 
  addUserKnob {22 btn_process l "<font size='4'><b>  Process Frames  </b></font>" T "from corridor_keyer import node as ck_node\nck_node.process_frames(nuke.thisNode())" +STARTLINE}
 
