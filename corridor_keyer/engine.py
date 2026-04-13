@@ -11,6 +11,7 @@ import sys
 import numpy as np
 
 _engine_instance = None
+_engine_img_size = None
 
 
 def _ensure_corridorkey_on_path():
@@ -34,9 +35,15 @@ def get_engine(checkpoint_path=None, device=None, img_size=2048):
     img_size : int
         Internal processing resolution (default 2048).
     """
-    global _engine_instance
-    if _engine_instance is not None:
+    global _engine_instance, _engine_img_size
+
+    # Reuse existing engine if resolution matches
+    if _engine_instance is not None and _engine_img_size == img_size:
         return _engine_instance
+
+    # Resolution changed — release old engine first
+    if _engine_instance is not None:
+        release_engine()
 
     _ensure_corridorkey_on_path()
 
@@ -71,6 +78,7 @@ def get_engine(checkpoint_path=None, device=None, img_size=2048):
         device=device,
         img_size=img_size,
     )
+    _engine_img_size = img_size
     return _engine_instance
 
 

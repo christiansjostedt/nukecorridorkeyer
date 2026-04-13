@@ -20,6 +20,9 @@ Gizmo {
  addUserKnob {4 output_mode l "Output" M {"Processed (RGBA)" "Foreground (RGB)" "Matte (Alpha)" "Plate (Passthrough)"}}
  output_mode "Processed (RGBA)"
 
+ addUserKnob {4 processing_res l "Resolution" t "Lower resolutions are much faster for preview.\nFull (2048) for final render, Half (1024) for lookdev." M {"Full (2048)" "Three Quarter (1536)" "Half (1024)" "Quarter (512)"}}
+ processing_res "Full (2048)"
+
  addUserKnob {26 div1 l "" +STARTLINE}
 
  addUserKnob {3 frame_range_first l "Frame Range"}
@@ -46,6 +49,9 @@ Gizmo {
  addUserKnob {6 live_preview l "Enable Live" t "When enabled, automatically processes the current frame whenever you scrub the timeline. Already-processed frames are cached in memory for instant playback." +STARTLINE}
  live_preview false
  addUserKnob {22 btn_toggle_live l "" T "from corridor_keyer import node as ck_node\nck_node.toggle_live(nuke.thisNode())" +INVISIBLE}
+
+ addUserKnob {3 prefetch_frames l "Prefetch" t "Number of frames ahead to pre-process in the background while you view the current frame. Set to 0 to disable." -STARTLINE}
+ prefetch_frames 2
 
  addUserKnob {26 div3b l "" +STARTLINE}
 

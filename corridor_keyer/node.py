@@ -30,33 +30,47 @@ _live_nodes = set()  # names of gizmos with Live mode enabled
 _last_live_frame = {}  # { gizmo_name: last_processed_frame }
 _live_processing = False  # guard against re-entrant processing
 
+# Background prefetch
+_prefetch_thread = None
+_prefetch_lock = threading.Lock()
+
+# Resolution presets: name -> internal processing size
+RESOLUTION_PRESETS = {
+    "Full (2048)": 2048,
+    "Three Quarter (1536)": 1536,
+    "Half (1024)": 1024,
+    "Quarter (512)": 512,
+}
+
 
 # ---------------------------------------------------------------------------
 # Pixel I/O helpers
 # ---------------------------------------------------------------------------
 
-def _node_to_numpy(node, channels, frame):
+def _read_node_pixels(node, channels, frame):
     """
-    Read pixel data from a Nuke node at a given frame.
+    Read pixel data from a Nuke node using the fastest available method.
 
+    Tries direct scanline reading first, falls back to temp EXR.
     Returns a float32 numpy array of shape (H, W, len(channels)).
     """
-    width = node.width()
-    height = node.height()
+    # Method 1: Direct pixel access via node.sample() — no disk I/O
+    try:
+        width = node.width()
+        height = node.height()
+        if width > 0 and height > 0:
+            # Build a single RGBA sample request
+            pixel_data = np.zeros((height, width, len(channels)), dtype=np.float32)
+            for ci, ch in enumerate(channels):
+                for y in range(height):
+                    for x in range(width):
+                        pixel_data[y, x, ci] = node.sample(ch, x + 0.5, y + 0.5)
+            return pixel_data
+    except Exception:
+        pass
 
-    arrays = []
-    for ch in channels:
-        buf = np.frombuffer(
-            node.sample(ch, 0, 0, width, height, frame),
-            dtype=np.float32,
-        ).reshape(height, width) if hasattr(node, "sample") else None
-        arrays.append(buf)
-
-    # Fallback: use nuke.execute snapshot approach
-    if arrays[0] is None:
-        return _node_to_numpy_via_temp(node, channels, frame)
-
-    return np.stack(arrays, axis=-1)
+    # Method 2: Temp EXR (reliable fallback)
+    return _node_to_numpy_via_temp(node, channels, frame)
 
 
 def _node_to_numpy_via_temp(node, channels, frame):
@@ -65,16 +79,25 @@ def _node_to_numpy_via_temp(node, channels, frame):
     This is the reliable fallback for all Nuke versions.
     """
     import tempfile
+    import shutil
 
     tmp_dir = tempfile.mkdtemp(prefix="ck_nuke_")
     tmp_path = os.path.join(tmp_dir, "tmp.%04d.exr" % frame)
 
-    write = nuke.nodes.Write(file=tmp_path, file_type="exr", datatype="32 bit float")
-    write.setInput(0, node)
-    nuke.execute(write, frame, frame)
-    nuke.delete(write)
+    try:
+        write = nuke.nodes.Write(
+            file=tmp_path, file_type="exr", datatype="32 bit float",
+        )
+        write.setInput(0, node)
+        nuke.execute(write, frame, frame)
+        nuke.delete(write)
 
-    return _read_exr(tmp_path.replace("%04d", "%04d" % frame), channels)
+        result = _read_exr(tmp_path.replace("%04d", "%04d" % frame), channels)
+    finally:
+        # Clean up temp files immediately
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    return result
 
 
 def _read_exr(path, channels):
@@ -187,6 +210,7 @@ def process_frames(gizmo):
     first = int(gizmo.knob("frame_range_first").value())
     last = int(gizmo.knob("frame_range_last").value())
     input_linear = gizmo.knob("input_colorspace").value() == "Linear"
+    img_size = _get_processing_resolution(gizmo)
 
     cache_dir = _get_cache_dir(gizmo)
     fg_dir = os.path.join(cache_dir, "FG")
@@ -199,6 +223,7 @@ def process_frames(gizmo):
 
     total = last - first + 1
     task = nuke.ProgressTask("CorridorKeyer")
+    eng = engine.get_engine(img_size=img_size)
 
     try:
         for i, frame in enumerate(range(first, last + 1)):
@@ -211,11 +236,16 @@ def process_frames(gizmo):
 
             # Read plate RGB
             rgb = _read_input_rgb(plate_input, frame)
+
+            if rgb is None:
+                nuke.warning("CorridorKeyer: Skipping frame %d (read error)" % frame)
+                continue
+
             # Read alpha hint
             alpha_hint = _read_input_alpha(hint_input, frame)
 
-            if rgb is None or alpha_hint is None:
-                nuke.warning("CorridorKeyer: Skipping frame %d (read error)" % frame)
+            if alpha_hint is None:
+                nuke.warning("CorridorKeyer: Skipping frame %d (hint error)" % frame)
                 continue
 
             # Resize alpha hint to match plate if needed
@@ -227,7 +257,7 @@ def process_frames(gizmo):
                 )
 
             # Run inference
-            result = engine.process_frame(
+            result = eng.process_frame(
                 rgb, alpha_hint, input_is_linear=input_linear
             )
 
@@ -347,6 +377,15 @@ def release_gpu():
 # Single-frame processing (current frame)
 # ---------------------------------------------------------------------------
 
+def _get_processing_resolution(gizmo):
+    """Read the processing resolution from the gizmo knob."""
+    try:
+        preset = gizmo.knob("processing_res").value()
+        return RESOLUTION_PRESETS.get(preset, 2048)
+    except Exception:
+        return 2048
+
+
 def _process_single_frame(gizmo, frame):
     """
     Process a single frame and write to cache.
@@ -359,11 +398,15 @@ def _process_single_frame(gizmo, frame):
         return None
 
     input_linear = gizmo.knob("input_colorspace").value() == "Linear"
+    img_size = _get_processing_resolution(gizmo)
 
     rgb = _read_input_rgb(plate_input, frame)
+    if rgb is None:
+        return None
+
     alpha_hint = _read_input_alpha(hint_input, frame)
 
-    if rgb is None or alpha_hint is None:
+    if alpha_hint is None:
         return None
 
     # Resize alpha hint to match plate if needed
@@ -374,8 +417,12 @@ def _process_single_frame(gizmo, frame):
             interpolation=cv2.INTER_LANCZOS4,
         )
 
-    result = engine.process_frame(rgb, alpha_hint, input_is_linear=input_linear)
+    # Get or create engine at the requested resolution
+    eng = engine.get_engine(img_size=img_size)
+    result = eng.process_frame(rgb, alpha_hint, input_is_linear=input_linear)
     return result
+
+
 
 
 def process_current_frame(gizmo):
@@ -504,6 +551,14 @@ def _live_update_callback():
 
             _update_read_nodes(gizmo, cache_dir, frame, frame)
 
+            # Kick off background prefetch for next frames
+            try:
+                prefetch_count = int(gizmo.knob("prefetch_frames").value())
+                if prefetch_count > 0:
+                    _prefetch_adjacent_frames(gizmo, frame, prefetch_count)
+            except Exception:
+                pass
+
         except Exception as e:
             nuke.warning("CorridorKeyer Live: %s" % str(e))
         finally:
@@ -548,3 +603,67 @@ def clear_memory_cache(gizmo):
     node_name = gizmo.name()
     _frame_cache.pop(node_name, None)
     _last_live_frame.pop(node_name, None)
+
+
+# ---------------------------------------------------------------------------
+# Background prefetch
+# ---------------------------------------------------------------------------
+
+def _prefetch_adjacent_frames(gizmo, current_frame, count=2):
+    """
+    Process frames adjacent to the current frame in a background thread.
+    Pre-caches the next `count` frames so scrubbing forward feels instant.
+    """
+    global _prefetch_thread
+
+    node_name = gizmo.name()
+    cache_dir = _get_cache_dir(gizmo)
+    frames_to_fetch = []
+
+    for offset in range(1, count + 1):
+        fwd = current_frame + offset
+        if fwd not in _frame_cache.get(node_name, {}):
+            frames_to_fetch.append(fwd)
+
+    if not frames_to_fetch:
+        return
+
+    def _do_prefetch():
+        for frame in frames_to_fetch:
+            with _prefetch_lock:
+                # Check again in case it was processed while waiting
+                if frame in _frame_cache.get(node_name, {}):
+                    continue
+
+                try:
+                    result = _process_single_frame(gizmo, frame)
+                    if result is None:
+                        continue
+
+                    frame_str = "%04d" % frame
+                    _write_exr(
+                        os.path.join(cache_dir, "FG", "fg.%s.exr" % frame_str),
+                        result["fg"], ["R", "G", "B"],
+                    )
+                    _write_exr(
+                        os.path.join(cache_dir, "Matte", "matte.%s.exr" % frame_str),
+                        result["alpha"], ["A"],
+                    )
+                    _write_exr(
+                        os.path.join(cache_dir, "Processed", "processed.%s.exr" % frame_str),
+                        result["processed"], ["R", "G", "B", "A"],
+                    )
+
+                    if node_name not in _frame_cache:
+                        _frame_cache[node_name] = {}
+                    _frame_cache[node_name][frame] = result
+
+                except Exception as e:
+                    nuke.tprint("CorridorKeyer prefetch: %s" % str(e))
+
+    # Only one prefetch thread at a time
+    if _prefetch_thread is not None and _prefetch_thread.is_alive():
+        return
+
+    _prefetch_thread = threading.Thread(target=_do_prefetch, daemon=True)
+    _prefetch_thread.start()
