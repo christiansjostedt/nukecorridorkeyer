@@ -1,0 +1,139 @@
+Gizmo {
+ name CorridorKeyer
+ tile_color 0x4b8c3aff
+ note_font "Verdana Bold"
+ help "CorridorKeyer\n\nAI-powered green screen keyer by Corridor Digital.\nProduces physically accurate foreground colour reconstruction\nand clean linear alpha.\n\nInputs:\n  1 (left) - Plate: Your green screen footage\n  2 (right) - Alpha Hint: A coarse matte (from Keylight, Primatte, IBK, etc.)\n\nOutputs:\n  Foreground: Use the 'output' dropdown to select FG, Matte, or Processed."
+
+ addUserKnob {20 CorridorKeyer l "Corridor Keyer"}
+
+ addUserKnob {26 title l "" +STARTLINE T "<font size='5' color='#4b8c3a'><b>Corridor Keyer</b></font>  <font size='2' color='#888'>v0.1.0</font>"}
+ addUserKnob {26 subtitle l "" +STARTLINE T "<font size='2' color='#999'>AI Green Screen Keyer by Corridor Digital</font>"}
+ addUserKnob {26 div0 l "" +STARTLINE}
+
+ addUserKnob {20 processing_grp l "Processing" n 1}
+
+ addUserKnob {4 input_colorspace l "Input Colorspace" M {"Linear" "sRGB"}}
+ input_colorspace "Linear"
+
+ addUserKnob {4 output_mode l "Output" M {"Processed (RGBA)" "Foreground (RGB)" "Matte (Alpha)" "Plate (Passthrough)"}}
+ output_mode "Processed (RGBA)"
+
+ addUserKnob {26 div1 l "" +STARTLINE}
+
+ addUserKnob {3 frame_range_first l "Frame Range"}
+ frame_range_first 1
+ addUserKnob {3 frame_range_last l "to" -STARTLINE}
+ frame_range_last 100
+
+ addUserKnob {22 set_frame_range l "Set to Script Range" T "node = nuke.thisNode()\nnode.knob('frame_range_first').setValue(nuke.root().firstFrame())\nnode.knob('frame_range_last').setValue(nuke.root().lastFrame())" +STARTLINE}
+
+ addUserKnob {20 processing_grp_end l "" n -1}
+
+ addUserKnob {26 div2 l "" +STARTLINE}
+
+ addUserKnob {20 cache_grp l "Cache" n 1}
+ addUserKnob {2 cache_dir l "Cache Directory" t "Leave empty to auto-create next to the Nuke script."}
+
+ addUserKnob {22 btn_clear_cache l "Clear Cache" T "from corridor_keyer import node as ck_node\nck_node.clear_cache(nuke.thisNode())" +STARTLINE}
+
+ addUserKnob {20 cache_grp_end l "" n -1}
+
+ addUserKnob {26 div3 l "" +STARTLINE}
+
+ addUserKnob {22 btn_process l "<font size='4'><b>  Process Frames  </b></font>" T "from corridor_keyer import node as ck_node\nck_node.process_frames(nuke.thisNode())" +STARTLINE}
+
+ addUserKnob {26 div4 l "" +STARTLINE}
+
+ addUserKnob {22 btn_release_gpu l "Release GPU Memory" T "from corridor_keyer import node as ck_node\nck_node.release_gpu()" +STARTLINE}
+
+ addUserKnob {26 footer l "" +STARTLINE T "<font size='1' color='#666'>github.com/nikopueringer/CorridorKey</font>"}
+}
+
+ Input {
+  inputs 0
+  name Plate
+  label "Plate"
+  xpos 0
+  ypos -400
+  number 0
+ }
+
+ Dot {
+  name dot_plate
+  xpos 34
+  ypos -250
+ }
+
+set N_plate [stack 0]
+
+ Input {
+  inputs 0
+  name AlphaHint
+  label "Alpha Hint"
+  xpos 200
+  ypos -400
+  number 1
+ }
+
+ Dot {
+  name dot_hint
+  xpos 234
+  ypos -250
+ }
+
+ # -- Read nodes are created/updated by the Process button --
+
+ Read {
+  inputs 0
+  name ReadProcessed
+  file ""
+  xpos 0
+  ypos -100
+  disable true
+ }
+
+set N_processed [stack 0]
+
+ Read {
+  inputs 0
+  name ReadFG
+  file ""
+  xpos -200
+  ypos -100
+  disable true
+ }
+
+set N_fg [stack 0]
+
+ Read {
+  inputs 0
+  name ReadMatte
+  file ""
+  xpos 200
+  ypos -100
+  disable true
+ }
+
+set N_matte [stack 0]
+
+ # Output switch based on output_mode knob
+push $N_processed
+push $N_fg
+push $N_matte
+push $N_plate
+
+ Switch {
+  inputs 4
+  which {{parent.output_mode}}
+  name OutputSwitch
+  xpos 0
+  ypos 50
+ }
+
+ Output {
+  name Output1
+  xpos 0
+  ypos 150
+ }
+
+end_group
