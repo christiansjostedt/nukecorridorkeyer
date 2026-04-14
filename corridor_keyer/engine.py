@@ -9,17 +9,54 @@ to the cloned CorridorKey repo if it is not on sys.path.
 import os
 import platform
 import sys
+import ctypes
 import numpy as np
 
-# On Windows, register torch's DLL directory before importing it.
-# Without this, Nuke's Python can't find torch's native dependencies.
-if platform.system() == "Windows" and hasattr(os, "add_dll_directory"):
+
+def _preload_torch_dlls():
+    """
+    Pre-load torch DLLs on Windows to work around Nuke's Python
+    not finding them through standard DLL search paths.
+    """
+    if platform.system() != "Windows":
+        return
+
+    torch_lib = None
     for sp in sys.path:
-        torch_lib = os.path.join(sp, "torch", "lib")
-        if os.path.isdir(torch_lib):
-            os.add_dll_directory(torch_lib)
-            os.environ["PATH"] = torch_lib + os.pathsep + os.environ.get("PATH", "")
+        candidate = os.path.join(sp, "torch", "lib")
+        if os.path.isdir(candidate):
+            torch_lib = candidate
             break
+    if not torch_lib:
+        return
+
+    # Register DLL directory (Python 3.8+)
+    if hasattr(os, "add_dll_directory"):
+        os.add_dll_directory(torch_lib)
+    os.environ["PATH"] = torch_lib + os.pathsep + os.environ.get("PATH", "")
+
+    # Pre-load DLLs in dependency order to avoid "procedure not found" errors.
+    # torch ships these DLLs and they must be loaded before fbgemm.dll.
+    load_order = [
+        "asmjit.dll",
+        "c10.dll",
+        "caffe2_nvrtc.dll",
+        "shm.dll",
+        "torch_cpu.dll",
+        "torch_python.dll",
+        "fbgemm.dll",
+        "torch_cuda.dll",
+    ]
+    for dll_name in load_order:
+        dll_path = os.path.join(torch_lib, dll_name)
+        if os.path.isfile(dll_path):
+            try:
+                ctypes.CDLL(dll_path)
+            except OSError:
+                pass  # some DLLs may not load standalone, that's OK
+
+
+_preload_torch_dlls()
 
 _engine_instance = None
 _engine_img_size = None
