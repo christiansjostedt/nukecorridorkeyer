@@ -304,6 +304,16 @@ def install_dependencies(corridorkey_dir, nuke_python_version=None):
                     subprocess.run(pip + ["install", "-r", req_file], check=False)
                 else:
                     subprocess.run(pip + ["install", "-e", corridorkey_dir], check=False)
+
+                # Return the site-packages path where Nuke's Python installed to
+                result = subprocess.run(
+                    nuke_cmd + ["-c", "import site; print(site.getusersitepackages())"],
+                    capture_output=True, text=True, check=False,
+                )
+                if result.returncode == 0:
+                    user_site = result.stdout.strip()
+                    if os.path.isdir(user_site):
+                        return user_site
                 return None
 
         # Nothing worked
