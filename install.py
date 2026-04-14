@@ -645,10 +645,28 @@ def patch_nuke_init(nuke_dir, plugin_dir, corridorkey_dir, deps_dir=None):
             site_lines += f'if r"{sp_escaped}" not in sys.path:\n'
             site_lines += f'    sys.path.insert(0, r"{sp_escaped}")\n'
 
+    # Add torch DLL directory to PATH early, before any module loads.
+    # Inside Nuke.exe, Nuke's own DLLs can shadow torch's dependencies
+    # (e.g. Intel MKL/TBB), causing "procedure not found" errors.
+    # Adding torch/lib to PATH first ensures the correct DLLs are found.
+    torch_dll_lines = ""
+    for sp in path_dirs:
+        torch_lib = os.path.join(sp, "torch", "lib")
+        if os.path.isdir(torch_lib):
+            torch_lib_escaped = torch_lib.replace("\\", "/")
+            torch_dll_lines = (
+                f'import platform\n'
+                f'if platform.system() == "Windows":\n'
+                f'    os.environ["PATH"] = r"{torch_lib_escaped}" + os.pathsep + os.environ.get("PATH", "")\n'
+                f'    if hasattr(os, "add_dll_directory"):\n'
+                f'        os.add_dll_directory(r"{torch_lib_escaped}")\n'
+            )
+            break
+
     block = f"""
 {INIT_MARKER}
 import os
-{site_lines}os.environ["CORRIDORKEY_PATH"] = r"{corridorkey_dir_escaped}"
+{site_lines}{torch_dll_lines}os.environ["CORRIDORKEY_PATH"] = r"{corridorkey_dir_escaped}"
 nuke.pluginAddPath(r"{plugin_dir_escaped}")
 """
 
