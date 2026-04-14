@@ -341,17 +341,21 @@ def _update_read_nodes(gizmo, cache_dir, first, last):
 
 def _wire_read(gizmo, node_name, file_pattern, first, last):
     """Create or update a named Read node inside the gizmo."""
+    # Nuke on Windows needs forward slashes
+    file_pattern = file_pattern.replace("\\", "/")
     existing = nuke.toNode(node_name)
     if existing:
         existing.knob("file").setValue(file_pattern)
         existing.knob("first").setValue(first)
         existing.knob("last").setValue(last)
+        existing.knob("disable").setValue(False)
     else:
         read = nuke.nodes.Read(name=node_name, file=file_pattern)
         read.knob("first").setValue(first)
         read.knob("last").setValue(last)
         read.knob("origfirst").setValue(first)
         read.knob("origlast").setValue(last)
+        read.knob("disable").setValue(False)
 
 
 # ---------------------------------------------------------------------------
