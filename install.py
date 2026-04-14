@@ -63,7 +63,7 @@ def self_update(plugin_dir):
 
             # Update plugin files (corridor_keyer/, gizmos/, icons/, etc.)
             update_dirs = ["corridor_keyer", "gizmos", "icons"]
-            update_files = ["init.py", "menu.py"]
+            update_files = ["init.py", "menu.py", "test_torch.py"]
 
             for member in zf.namelist():
                 if zip_root and member.startswith(zip_root + "/"):
