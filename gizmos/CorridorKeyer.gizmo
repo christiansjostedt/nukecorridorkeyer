@@ -134,10 +134,12 @@ set N_fg [stack 0]
 set N_matte [stack 0]
 
  # Output switch based on output_mode knob
-push $N_processed
-push $N_fg
-push $N_matte
+ # Push order is reversed: last push = input 0
+ # Menu: 0=Processed, 1=FG, 2=Matte, 3=Plate
 push $N_plate
+push $N_matte
+push $N_fg
+push $N_processed
 
  Switch {
   inputs 4
