@@ -8,6 +8,7 @@ Usage:
     python install.py                   # Interactive install
     python install.py --corridorkey /path/to/CorridorKey
     python install.py --nuke-dir /custom/.nuke
+    python install.py --nuke-python 3.10 # Match Nuke's Python version
     python install.py --uninstall
 """
 
@@ -28,6 +29,13 @@ PLUGIN_NAME = "nukecorridorkeyer"
 CORRIDORKEY_REPO = "https://github.com/nikopueringer/CorridorKey.git"
 CORRIDORKEY_ZIP = "https://github.com/nikopueringer/CorridorKey/archive/refs/heads/main.zip"
 INIT_MARKER = "# --- CorridorKeyer plugin path (auto-added by installer) ---"
+
+# Known Nuke version -> Python version mapping
+NUKE_PYTHON_VERSIONS = {
+    "15": "3.10",
+    "14": "3.9",
+    "13": "3.7",
+}
 
 
 def get_nuke_dir():
@@ -134,41 +142,107 @@ def clone_corridorkey(target_dir):
         return download_corridorkey_zip(target_dir)
 
 
-def get_site_packages_dirs():
-    """Return site-packages directories where pip installs packages."""
-    dirs = []
-    try:
-        import site
-        # User site-packages (where --user installs go)
-        user_site = site.getusersitepackages()
-        if user_site and os.path.isdir(user_site):
-            dirs.append(user_site)
-        # Global site-packages
-        for d in site.getsitepackages():
-            if os.path.isdir(d):
-                dirs.append(d)
-    except Exception:
-        pass
-    return dirs
+def detect_nuke_python_version():
+    """Try to detect the installed Nuke version and return its Python version."""
+    system = platform.system()
+    search_dirs = []
+
+    if system == "Windows":
+        for base in [os.environ.get("PROGRAMFILES", r"C:\Program Files")]:
+            if base and os.path.isdir(base):
+                search_dirs.append(base)
+    elif system == "Darwin":
+        search_dirs.append("/Applications")
+    else:
+        search_dirs.extend(["/usr/local", "/opt"])
+
+    for search_dir in search_dirs:
+        try:
+            for entry in os.listdir(search_dir):
+                entry_lower = entry.lower()
+                if "nuke" not in entry_lower:
+                    continue
+                for nuke_major, py_ver in NUKE_PYTHON_VERSIONS.items():
+                    if nuke_major in entry:
+                        return py_ver
+        except OSError:
+            continue
+    return None
 
 
-def install_dependencies(corridorkey_dir):
+def get_pip_platform():
+    """Return the pip platform string for the current OS."""
+    system = platform.system()
+    machine = platform.machine().lower()
+    if system == "Windows":
+        if machine in ("amd64", "x86_64"):
+            return "win_amd64"
+        return "win32"
+    elif system == "Darwin":
+        if machine == "arm64":
+            return "macosx_11_0_arm64"
+        return "macosx_10_9_x86_64"
+    else:
+        if machine in ("x86_64", "amd64"):
+            return "manylinux2014_x86_64"
+        return f"manylinux2014_{machine}"
+
+
+def install_dependencies(corridorkey_dir, nuke_python_version=None):
     """Install CorridorKey's Python dependencies."""
     pip = find_pip()
     if pip is None:
         print("  WARNING: pip not found. Install dependencies manually:")
         print(f"    pip install -e {corridorkey_dir}")
-        return
+        return None
 
-    print("  Installing CorridorKey Python dependencies...")
-    req_file = os.path.join(corridorkey_dir, "requirements.txt")
-    if os.path.exists(req_file):
-        subprocess.run(pip + ["install", "-r", req_file], check=False)
+    sys_version = f"{sys.version_info.major}.{sys.version_info.minor}"
+    cross_install = nuke_python_version and nuke_python_version != sys_version
+
+    if cross_install:
+        print(f"  System Python is {sys_version}, Nuke needs {nuke_python_version}")
+        print(f"  Installing dependencies for Python {nuke_python_version}...")
+        deps_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "nuke_deps")
+        os.makedirs(deps_dir, exist_ok=True)
+        pip_platform = get_pip_platform()
+
+        req_file = os.path.join(corridorkey_dir, "requirements.txt")
+        if os.path.exists(req_file):
+            install_args = ["-r", req_file]
+        else:
+            install_args = [corridorkey_dir]
+
+        subprocess.run(
+            pip + ["install"] + install_args + [
+                "--target", deps_dir,
+                "--python-version", nuke_python_version,
+                "--platform", pip_platform,
+                "--only-binary", ":all:",
+            ],
+            check=False,
+        )
+        # Also install corridorkey source into the target dir
+        subprocess.run(
+            pip + ["install", corridorkey_dir,
+                   "--target", deps_dir,
+                   "--python-version", nuke_python_version,
+                   "--platform", pip_platform,
+                   "--only-binary", ":all:",
+                   "--no-deps"],
+            check=False,
+        )
+        return deps_dir
     else:
-        subprocess.run(pip + ["install", "-e", corridorkey_dir], check=False)
+        print("  Installing CorridorKey Python dependencies...")
+        req_file = os.path.join(corridorkey_dir, "requirements.txt")
+        if os.path.exists(req_file):
+            subprocess.run(pip + ["install", "-r", req_file], check=False)
+        else:
+            subprocess.run(pip + ["install", "-e", corridorkey_dir], check=False)
+        return None
 
 
-def patch_nuke_init(nuke_dir, plugin_dir, corridorkey_dir):
+def patch_nuke_init(nuke_dir, plugin_dir, corridorkey_dir, deps_dir=None):
     """Add plugin path and env var to ~/.nuke/init.py."""
     init_path = os.path.join(nuke_dir, "init.py")
 
@@ -178,7 +252,8 @@ def patch_nuke_init(nuke_dir, plugin_dir, corridorkey_dir):
         with open(init_path, "r") as f:
             existing = f.read()
 
-    # Remove old entry if present
+    # Remove old entry if present — delete everything between our marker
+    # and the next blank line (or EOF)
     if INIT_MARKER in existing:
         lines = existing.splitlines(keepends=True)
         new_lines = []
@@ -187,12 +262,15 @@ def patch_nuke_init(nuke_dir, plugin_dir, corridorkey_dir):
             if INIT_MARKER in line:
                 skip = True
                 continue
-            if skip and line.strip() == "":
+            if skip:
+                stripped = line.strip()
+                # Keep skipping non-empty lines that are part of our block
+                if stripped and not stripped.startswith("#"):
+                    continue
+                # Empty line or new comment = end of our block
                 skip = False
-                continue
-            if skip and (line.startswith("import ") or line.startswith("os.") or line.startswith("nuke.") or line.startswith("if r\"") or line.startswith("    sys.path")):
-                continue
-            skip = False
+                if stripped == "":
+                    continue
             new_lines.append(line)
         existing = "".join(new_lines).rstrip("\n")
 
@@ -200,15 +278,31 @@ def patch_nuke_init(nuke_dir, plugin_dir, corridorkey_dir):
     plugin_dir_escaped = plugin_dir.replace("\\", "/")
     corridorkey_dir_escaped = corridorkey_dir.replace("\\", "/")
 
-    # Build sys.path lines for site-packages so Nuke can find numpy, torch, etc.
-    site_packages = get_site_packages_dirs()
+    # Build sys.path lines so Nuke can find dependencies
+    path_dirs = []
+    if deps_dir:
+        # Cross-version install: deps are in a dedicated directory
+        path_dirs.append(deps_dir)
+    else:
+        # Same-version install: add system site-packages
+        try:
+            import site
+            user_site = site.getusersitepackages()
+            if user_site and os.path.isdir(user_site):
+                path_dirs.append(user_site)
+            for d in site.getsitepackages():
+                if os.path.isdir(d):
+                    path_dirs.append(d)
+        except Exception:
+            pass
+
     site_lines = ""
-    if site_packages:
+    if path_dirs:
         site_lines = "import sys\n"
-        for sp in site_packages:
+        for sp in path_dirs:
             sp_escaped = sp.replace("\\", "/")
             site_lines += f'if r"{sp_escaped}" not in sys.path:\n'
-            site_lines += f'    sys.path.append(r"{sp_escaped}")\n'
+            site_lines += f'    sys.path.insert(0, r"{sp_escaped}")\n'
 
     block = f"""
 {INIT_MARKER}
@@ -246,12 +340,13 @@ def remove_nuke_init_entry(nuke_dir):
         if INIT_MARKER in line:
             skip = True
             continue
-        if skip and line.strip() == "":
+        if skip:
+            stripped = line.strip()
+            if stripped and not stripped.startswith("#"):
+                continue
             skip = False
-            continue
-        if skip and (line.startswith("import ") or line.startswith("os.") or line.startswith("nuke.")):
-            continue
-        skip = False
+            if stripped == "":
+                continue
         new_lines.append(line)
 
     with open(init_path, "w") as f:
@@ -302,6 +397,10 @@ def main():
         help="Skip installing Python dependencies",
     )
     parser.add_argument(
+        "--nuke-python",
+        help="Nuke's Python version, e.g. '3.10' (auto-detected if omitted)",
+    )
+    parser.add_argument(
         "--uninstall",
         action="store_true",
         help="Remove CorridorKeyer from Nuke config",
@@ -318,9 +417,21 @@ def main():
         print("Done. Plugin files were not deleted — remove manually if desired.")
         return
 
+    # Detect Nuke's Python version
+    nuke_python = args.nuke_python
+    if not nuke_python:
+        nuke_python = detect_nuke_python_version()
+
+    sys_version = f"{sys.version_info.major}.{sys.version_info.minor}"
+
     print("=" * 60)
     print("  CorridorKeyer Installer")
     print(f"  Platform: {platform.system()} {platform.machine()}")
+    print(f"  System Python: {sys_version}")
+    if nuke_python:
+        print(f"  Nuke Python:   {nuke_python}" + (" (version mismatch — will cross-install)" if nuke_python != sys_version else " (matches)"))
+    else:
+        print(f"  Nuke Python:   not detected (use --nuke-python if needed)")
     print("=" * 60)
 
     # 1. Locate or clone CorridorKey
@@ -337,18 +448,19 @@ def main():
         clone_ok = clone_corridorkey(corridorkey_dir)
 
     # 2. Install dependencies
+    deps_dir = None
     if not clone_ok:
         print(f"\n[2/3] Skipping dependency install (CorridorKey not available)")
     elif not args.skip_deps:
         print(f"\n[2/3] Python dependencies")
-        install_dependencies(corridorkey_dir)
+        deps_dir = install_dependencies(corridorkey_dir, nuke_python)
     else:
         print(f"\n[2/3] Skipping dependency install")
 
     # 3. Patch Nuke init
     print(f"\n[3/3] Configuring Nuke ({nuke_dir})")
     os.makedirs(nuke_dir, exist_ok=True)
-    patch_nuke_init(nuke_dir, plugin_dir, corridorkey_dir)
+    patch_nuke_init(nuke_dir, plugin_dir, corridorkey_dir, deps_dir)
 
     if not clone_ok:
         print("\n" + "=" * 60)
