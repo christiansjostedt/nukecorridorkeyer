@@ -53,17 +53,17 @@ RESOLUTION_PRESETS = {
 
 def _read_node_pixels(node, channels, frame):
     """
-    Read pixel data from a Nuke node using the fastest available method.
+    Read pixel data from a Nuke node.
 
-    Tries direct scanline reading first, falls back to temp EXR.
+    Tries direct buffer reading first, falls back to temp EXR.
     Returns a float32 numpy array of shape (H, W, len(channels)).
     """
-    # Method 1: Direct pixel access via node.sample() — no disk I/O
+    # Method 1: Direct sample — works without creating nodes but
+    # only practical for small images
     try:
         width = node.width()
         height = node.height()
-        if width > 0 and height > 0:
-            # Build a single RGBA sample request
+        if width > 0 and height > 0 and width * height <= 262144:  # up to 512x512
             pixel_data = np.zeros((height, width, len(channels)), dtype=np.float32)
             for ci, ch in enumerate(channels):
                 for y in range(height):
@@ -73,7 +73,7 @@ def _read_node_pixels(node, channels, frame):
     except Exception:
         pass
 
-    # Method 2: Temp EXR (reliable fallback)
+    # Method 2: Temp EXR (reliable for all sizes)
     return _node_to_numpy_via_temp(node, channels, frame)
 
 
@@ -98,6 +98,8 @@ def _node_to_numpy_via_temp(node, channels, frame):
                 file=tmp_path, file_type="exr", datatype="32 bit float",
             )
             write.setInput(0, node)
+            write.knob("hide_input").setValue(True)
+            write.setXYpos(-9999, -9999)  # off-screen
         finally:
             nuke.root().end()
 
