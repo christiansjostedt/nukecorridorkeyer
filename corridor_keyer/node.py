@@ -465,8 +465,15 @@ def process_current_frame(gizmo):
             nuke.message("CorridorKeyer: Failed to process frame %d." % frame)
             return
 
+        nuke.tprint("CorridorKeyer: Got result keys: %s" % list(result.keys()))
+        for k, v in result.items():
+            if hasattr(v, 'shape'):
+                nuke.tprint("  %s: shape=%s dtype=%s min=%.4f max=%.4f" % (
+                    k, v.shape, v.dtype, v.min(), v.max()))
+
         # Write to disk
         frame_str = "%04d" % frame
+        nuke.tprint("CorridorKeyer: Writing to %s" % cache_dir)
         _write_exr(
             os.path.join(cache_dir, "FG", "fg.%s.exr" % frame_str),
             result["fg"], ["R", "G", "B"],
