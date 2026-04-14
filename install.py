@@ -747,12 +747,28 @@ def _install_cuda_torch(pip, python_cmd):
         print(f"  No NVIDIA GPU detected — using CPU torch.")
         return
 
-    print(f"  NVIDIA GPU detected — installing CUDA torch (this is a large download)...")
+    # Detect GPU compute capability to pick the right CUDA version
+    # RTX 50xx (Blackwell, sm_120) needs cu128+, older GPUs use cu126
+    cuda_index = "cu126"
+    try:
+        gpu_check = subprocess.run(
+            ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
+            capture_output=True, text=True, check=False,
+        )
+        if gpu_check.returncode == 0:
+            gpu_name = gpu_check.stdout.strip().lower()
+            # RTX 50xx series (Blackwell) needs CUDA 12.8+
+            if "50" in gpu_name and ("rtx" in gpu_name or "geforce" in gpu_name):
+                cuda_index = "cu128"
+    except FileNotFoundError:
+        pass
+
+    print(f"  NVIDIA GPU detected — installing CUDA torch ({cuda_index}, this is a large download)...")
     subprocess.run(
         pip + [
             "install",
             "torch==2.8.0", "torchvision==0.23.0",
-            "--index-url", "https://download.pytorch.org/whl/cu126",
+            "--index-url", f"https://download.pytorch.org/whl/{cuda_index}",
             "--force-reinstall", "--no-deps",
         ],
         check=False,
