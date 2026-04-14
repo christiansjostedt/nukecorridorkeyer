@@ -82,7 +82,8 @@ def _node_to_numpy_via_temp(node, channels, frame):
     import shutil
 
     tmp_dir = tempfile.mkdtemp(prefix="ck_nuke_")
-    tmp_path = os.path.join(tmp_dir, "tmp.%04d.exr" % frame)
+    # Nuke on Windows requires forward slashes in file paths
+    tmp_path = os.path.join(tmp_dir, "tmp.%04d.exr" % frame).replace("\\", "/")
 
     try:
         write = nuke.nodes.Write(
@@ -92,7 +93,9 @@ def _node_to_numpy_via_temp(node, channels, frame):
         nuke.execute(write, frame, frame)
         nuke.delete(write)
 
-        result = _read_exr(tmp_path.replace("%04d", "%04d" % frame), channels)
+        exr_path = tmp_path.replace("%04d", "%04d" % frame)
+        # Resolve back to OS path for file reading
+        result = _read_exr(os.path.normpath(exr_path), channels)
     finally:
         # Clean up temp files immediately
         shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -134,6 +137,8 @@ def _read_exr(path, channels):
 
 def _write_exr(path, image, channel_names=None):
     """Write a float32 numpy array to EXR."""
+    # Ensure OS-native path for file I/O
+    path = os.path.normpath(path)
     os.makedirs(os.path.dirname(path), exist_ok=True)
 
     try:
