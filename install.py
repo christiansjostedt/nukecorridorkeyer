@@ -170,6 +170,43 @@ def detect_nuke_python_version():
     return None
 
 
+def _find_nuke_python():
+    """Find Nuke's bundled Python executable on Windows."""
+    if platform.system() != "Windows":
+        return None
+    prog = os.environ.get("PROGRAMFILES", r"C:\Program Files")
+    if not os.path.isdir(prog):
+        return None
+    for entry in sorted(os.listdir(prog), reverse=True):
+        if "nuke" not in entry.lower():
+            continue
+        nuke_dir = os.path.join(prog, entry)
+        # Nuke ships python.exe in its install directory
+        for python_path in [
+            os.path.join(nuke_dir, "python.exe"),
+            os.path.join(nuke_dir, "python3.exe"),
+            os.path.join(nuke_dir, "lib", "python.exe"),
+        ]:
+            if os.path.isfile(python_path):
+                return python_path
+        # Can also use Nuke itself in terminal mode
+        for nuke_exe in sorted(
+            [f for f in os.listdir(nuke_dir) if f.lower().endswith(".exe") and "nuke" in f.lower()],
+            key=len,
+        ):
+            nuke_path = os.path.join(nuke_dir, nuke_exe)
+            try:
+                result = subprocess.run(
+                    [nuke_path, "-t", "-c", "import sys; print(sys.version)"],
+                    capture_output=True, text=True, timeout=30,
+                )
+                if result.returncode == 0 and "3." in result.stdout:
+                    return nuke_path + " -t"
+            except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+                continue
+    return None
+
+
 def _find_matching_python(version):
     """
     Find a Python executable matching the given version string (e.g. '3.10').
@@ -251,13 +288,31 @@ def install_dependencies(corridorkey_dir, nuke_python_version=None):
             else:
                 print(f"  WARNING: Python {nuke_python_version} found but pip not available")
 
-        # No matching Python found
+        # Try Nuke's own Python as a last resort
+        nuke_python_exe = _find_nuke_python()
+        if nuke_python_exe:
+            print(f"  Found Nuke's Python: {nuke_python_exe}")
+            if " -t" in nuke_python_exe:
+                nuke_cmd = nuke_python_exe.split()
+            else:
+                nuke_cmd = [nuke_python_exe]
+            pip = _find_pip_for_python(nuke_cmd)
+            if pip:
+                print(f"  Installing dependencies using Nuke's Python...")
+                req_file = os.path.join(corridorkey_dir, "requirements.txt")
+                if os.path.exists(req_file):
+                    subprocess.run(pip + ["install", "-r", req_file], check=False)
+                else:
+                    subprocess.run(pip + ["install", "-e", corridorkey_dir], check=False)
+                return None
+
+        # Nothing worked
         print(f"\n  ERROR: Python {nuke_python_version} is not installed.")
         print(f"  Nuke uses Python {nuke_python_version} internally,")
         print(f"  but your system has Python {sys_version}.")
         print(f"\n  To fix this, install Python {nuke_python_version} from https://python.org/downloads/")
         if platform.system() == "Windows":
-            print(f"  (Make sure to check 'Add to PATH' or use the 'py' launcher)")
+            print(f"  (it installs side-by-side with {sys_version} — won't break anything)")
         print(f"  Then re-run this installer.")
         return "FAILED"
 
