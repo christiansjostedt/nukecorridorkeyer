@@ -507,6 +507,14 @@ def main():
         print("Done. Plugin files were not deleted — remove manually if desired.")
         return
 
+    # Clean up any previous installation first
+    remove_nuke_init_entry(nuke_dir)
+    # Clean stale nuke_deps from previous cross-install attempts
+    stale_deps = os.path.join(plugin_dir, "nuke_deps")
+    if os.path.isdir(stale_deps):
+        print("  Cleaning previous nuke_deps/...")
+        shutil.rmtree(stale_deps, ignore_errors=True)
+
     # Detect Nuke's Python version
     nuke_python = args.nuke_python
     if not nuke_python:
