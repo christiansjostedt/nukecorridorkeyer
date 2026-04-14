@@ -63,7 +63,7 @@ def self_update(plugin_dir):
 
             # Update plugin files (corridor_keyer/, gizmos/, icons/, etc.)
             update_dirs = ["corridor_keyer", "gizmos", "icons"]
-            update_files = ["init.py", "menu.py", "test_torch.py", "install.py"]
+            update_files = ["init.py", "menu.py", "test_torch.py", "install.py", "update.py"]
 
             for member in zf.namelist():
                 if zip_root and member.startswith(zip_root + "/"):
@@ -717,6 +717,60 @@ def remove_nuke_init_entry(nuke_dir):
     print(f"  Cleaned {init_path}")
 
 
+def _download_model(corridorkey_dir, nuke_python_version=None):
+    """Download the CorridorKey model checkpoint if not present."""
+    models_dir = os.path.join(corridorkey_dir, "models")
+    checkpoint = os.path.join(models_dir, "CorridorKey.pth")
+
+    if os.path.isfile(checkpoint):
+        size_mb = os.path.getsize(checkpoint) / (1024 * 1024)
+        print(f"  Model already downloaded ({size_mb:.0f}MB)")
+        return
+
+    os.makedirs(models_dir, exist_ok=True)
+    print(f"  Downloading CorridorKey model (this may take a few minutes)...")
+
+    # Find the right Python to run huggingface_hub
+    python_cmd = None
+    # Try Nuke's Python first
+    nuke_python_exe = _find_nuke_python()
+    if nuke_python_exe:
+        if " -t" in nuke_python_exe:
+            python_cmd = nuke_python_exe.split()
+        else:
+            python_cmd = [nuke_python_exe]
+
+    # Try matching Python
+    if not python_cmd and nuke_python_version:
+        matching = _find_matching_python(nuke_python_version)
+        if matching:
+            python_cmd = matching
+
+    # Fall back to system Python
+    if not python_cmd:
+        python_cmd = [sys.executable]
+
+    download_script = (
+        "from huggingface_hub import hf_hub_download; "
+        f"hf_hub_download('nikopueringer/CorridorKey', 'CorridorKey.pth', "
+        f"local_dir=r'{models_dir.replace(chr(92), '/')}')"
+    )
+
+    result = subprocess.run(
+        python_cmd + ["-c", download_script],
+        check=False,
+    )
+
+    if result.returncode == 0 and os.path.isfile(checkpoint):
+        size_mb = os.path.getsize(checkpoint) / (1024 * 1024)
+        print(f"  Model downloaded ({size_mb:.0f}MB)")
+    else:
+        print(f"  WARNING: Model download failed.")
+        print(f"  You can download it manually:")
+        print(f"  1. Visit https://huggingface.co/nikopueringer/CorridorKey")
+        print(f"  2. Download CorridorKey.pth to {models_dir}")
+
+
 def _create_nuke_launcher(plugin_dir, deps_dir):
     """Create a batch file that launches Nuke with torch DLLs on PATH."""
     if platform.system() != "Windows":
@@ -893,16 +947,16 @@ def main():
             sys.exit(1)
     else:
         corridorkey_dir = get_default_corridorkey_dir()
-        print(f"\n[1/3] CorridorKey repository")
+        print(f"\n[1/4] CorridorKey repository")
         clone_ok = clone_corridorkey(corridorkey_dir)
 
     # 2. Install dependencies
     deps_dir = None
     deps_failed = False
     if not clone_ok:
-        print(f"\n[2/3] Skipping dependency install (CorridorKey not available)")
+        print(f"\n[2/4] Skipping dependency install (CorridorKey not available)")
     elif not args.skip_deps:
-        print(f"\n[2/3] Python dependencies")
+        print(f"\n[2/4] Python dependencies")
         _ensure_vcredist_windows()
         # Remove conflicting packages from the wrong Python version
         _cleanup_wrong_version_packages(nuke_python)
@@ -911,7 +965,7 @@ def main():
             deps_failed = True
             deps_dir = None
     else:
-        print(f"\n[2/3] Skipping dependency install")
+        print(f"\n[2/4] Skipping dependency install")
 
     if deps_failed:
         # Don't patch init.py with wrong paths or report success
@@ -923,8 +977,12 @@ def main():
         print()
         sys.exit(1)
 
-    # 3. Patch Nuke init
-    print(f"\n[3/3] Configuring Nuke ({nuke_dir})")
+    # 3. Download model checkpoint
+    print(f"\n[3/4] CorridorKey model")
+    _download_model(corridorkey_dir, nuke_python)
+
+    # 4. Patch Nuke init
+    print(f"\n[4/4] Configuring Nuke ({nuke_dir})")
     os.makedirs(nuke_dir, exist_ok=True)
     patch_nuke_init(nuke_dir, plugin_dir, corridorkey_dir, deps_dir)
 
