@@ -518,6 +518,8 @@ def install_dependencies(corridorkey_dir, nuke_python_version=None):
                     subprocess.run(pip + ["install", "-r", req_file], check=False)
                 else:
                     subprocess.run(pip + ["install", "-e", corridorkey_dir], check=False)
+                # Install CUDA torch if an NVIDIA GPU is present
+                _install_cuda_torch(pip, nuke_cmd)
                 # Nuke's PySide2 is compiled against NumPy 1.x
                 print(f"  Downgrading numpy for Nuke compatibility...")
                 subprocess.run(pip + ["install", "numpy<2"], check=False)
@@ -715,6 +717,54 @@ def remove_nuke_init_entry(nuke_dir):
         f.write("".join(new_lines))
 
     print(f"  Cleaned {init_path}")
+
+
+def _install_cuda_torch(pip, python_cmd):
+    """Replace CPU-only torch with CUDA version if an NVIDIA GPU is present."""
+    if platform.system() not in ("Windows", "Linux"):
+        return  # macOS uses MPS, not CUDA
+
+    # Check if CUDA torch is already installed
+    result = subprocess.run(
+        python_cmd + ["-c", "import torch; print(torch.cuda.is_available())"],
+        capture_output=True, text=True, check=False,
+    )
+    if result.returncode == 0 and "True" in result.stdout:
+        print(f"  CUDA torch already installed.")
+        return
+
+    # Check for NVIDIA GPU
+    has_nvidia = False
+    try:
+        nvidia_check = subprocess.run(
+            ["nvidia-smi"], capture_output=True, check=False,
+        )
+        has_nvidia = nvidia_check.returncode == 0
+    except FileNotFoundError:
+        pass
+
+    if not has_nvidia:
+        print(f"  No NVIDIA GPU detected — using CPU torch.")
+        return
+
+    print(f"  NVIDIA GPU detected — installing CUDA torch (this is a large download)...")
+    subprocess.run(
+        pip + [
+            "install",
+            "torch==2.8.0", "torchvision==0.23.0",
+            "--index-url", "https://download.pytorch.org/whl/cu126",
+            "--force-reinstall", "--no-deps",
+        ],
+        check=False,
+    )
+
+    # Verify
+    result = subprocess.run(
+        python_cmd + ["-c", "import torch; print('CUDA:', torch.cuda.is_available())"],
+        capture_output=True, text=True, check=False,
+    )
+    if result.returncode == 0:
+        print(f"  {result.stdout.strip()}")
 
 
 def _download_model(corridorkey_dir, nuke_python_version=None):
