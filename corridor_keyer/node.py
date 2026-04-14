@@ -9,6 +9,10 @@ inside the gizmo to display results.
 import os
 import time
 import threading
+
+# Enable OpenEXR support in OpenCV (disabled by default in pip builds)
+os.environ["OPENCV_IO_ENABLE_OPENEXR"] = "1"
+
 import numpy as np
 
 try:
