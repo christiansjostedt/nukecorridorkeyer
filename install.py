@@ -518,6 +518,9 @@ def install_dependencies(corridorkey_dir, nuke_python_version=None):
                     subprocess.run(pip + ["install", "-r", req_file], check=False)
                 else:
                     subprocess.run(pip + ["install", "-e", corridorkey_dir], check=False)
+                # Nuke's PySide2 is compiled against NumPy 1.x
+                print(f"  Downgrading numpy for Nuke compatibility...")
+                subprocess.run(pip + ["install", "numpy<2"], check=False)
 
                 # Return the site-packages path where Nuke's Python installed to
                 result = subprocess.run(

@@ -19,7 +19,22 @@ for _missing_mod in ["_lzma", "lzma"]:
         try:
             __import__(_missing_mod)
         except (ImportError, ModuleNotFoundError):
-            sys.modules[_missing_mod] = types.ModuleType(_missing_mod)
+            _stub = types.ModuleType(_missing_mod)
+            # torchvision.datasets.utils references lzma.open
+            _stub.open = None
+            _stub.LZMAFile = None
+            _stub.LZMACompressor = None
+            _stub.LZMADecompressor = None
+            _stub.LZMAError = type("LZMAError", (Exception,), {})
+            _stub.FORMAT_AUTO = 0
+            _stub.FORMAT_XZ = 1
+            _stub.FORMAT_ALONE = 2
+            _stub.FORMAT_RAW = 3
+            _stub.CHECK_NONE = 0
+            _stub.CHECK_CRC32 = 1
+            _stub.CHECK_CRC64 = 4
+            _stub.CHECK_SHA256 = 10
+            sys.modules[_missing_mod] = _stub
 
 import numpy as np
 
