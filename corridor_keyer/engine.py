@@ -7,8 +7,19 @@ to the cloned CorridorKey repo if it is not on sys.path.
 """
 
 import os
+import platform
 import sys
 import numpy as np
+
+# On Windows, register torch's DLL directory before importing it.
+# Without this, Nuke's Python can't find torch's native dependencies.
+if platform.system() == "Windows" and hasattr(os, "add_dll_directory"):
+    for sp in sys.path:
+        torch_lib = os.path.join(sp, "torch", "lib")
+        if os.path.isdir(torch_lib):
+            os.add_dll_directory(torch_lib)
+            os.environ["PATH"] = torch_lib + os.pathsep + os.environ.get("PATH", "")
+            break
 
 _engine_instance = None
 _engine_img_size = None
