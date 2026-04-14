@@ -207,6 +207,73 @@ def _find_nuke_python():
     return None
 
 
+def _auto_install_python_windows(version):
+    """Download and silently install Python side-by-side on Windows."""
+    # Python.org embeddable/installer URL pattern
+    # e.g. https://www.python.org/ftp/python/3.10.11/python-3.10.11-amd64.exe
+    patch_versions = {
+        "3.10": "3.10.11",
+        "3.9": "3.9.13",
+        "3.7": "3.7.9",
+    }
+    full_version = patch_versions.get(version)
+    if not full_version:
+        print(f"  Don't know which patch version to use for Python {version}")
+        return False
+
+    url = f"https://www.python.org/ftp/python/{full_version}/python-{full_version}-amd64.exe"
+    installer_path = os.path.join(os.environ.get("TEMP", "."), f"python-{full_version}-amd64.exe")
+
+    # Download
+    print(f"  Downloading Python {full_version}...")
+    try:
+        try:
+            response = urlopen(url)
+        except URLError as e:
+            if "CERTIFICATE_VERIFY_FAILED" in str(e):
+                ctx = ssl.create_default_context()
+                ctx.check_hostname = False
+                ctx.verify_mode = ssl.CERT_NONE
+                response = urlopen(url, context=ctx)
+            else:
+                raise
+        with open(installer_path, "wb") as f:
+            f.write(response.read())
+    except (URLError, OSError) as e:
+        print(f"  ERROR: Failed to download Python installer: {e}")
+        return False
+
+    # Install silently, side-by-side, no PATH modification
+    print(f"  Installing Python {full_version} (side-by-side, not added to PATH)...")
+    try:
+        result = subprocess.run(
+            [
+                installer_path,
+                "/quiet",               # silent install
+                "InstallAllUsers=0",     # per-user install (no admin needed)
+                "PrependPath=0",         # don't modify PATH
+                "Include_launcher=1",    # install py launcher
+                "Include_pip=1",         # include pip
+            ],
+            check=True,
+            timeout=300,
+        )
+        print(f"  Python {full_version} installed successfully.")
+        return True
+    except subprocess.CalledProcessError as e:
+        print(f"  ERROR: Python installer failed: {e}")
+        return False
+    except subprocess.TimeoutExpired:
+        print(f"  ERROR: Python installer timed out")
+        return False
+    finally:
+        # Clean up installer
+        try:
+            os.remove(installer_path)
+        except OSError:
+            pass
+
+
 def _find_matching_python(version):
     """
     Find a Python executable matching the given version string (e.g. '3.10').
@@ -315,6 +382,33 @@ def install_dependencies(corridorkey_dir, nuke_python_version=None):
                     if os.path.isdir(user_site):
                         return user_site
                 return None
+
+        # Auto-install Python on Windows
+        if platform.system() == "Windows":
+            print(f"\n  Python {nuke_python_version} not found. Attempting automatic install...")
+            if _auto_install_python_windows(nuke_python_version):
+                # Retry finding it
+                matching_python = _find_matching_python(nuke_python_version)
+                if matching_python:
+                    print(f"  Found matching Python: {' '.join(matching_python)}")
+                    pip = _find_pip_for_python(matching_python)
+                    if pip:
+                        print(f"  Installing dependencies using Python {nuke_python_version}...")
+                        req_file = os.path.join(corridorkey_dir, "requirements.txt")
+                        if os.path.exists(req_file):
+                            subprocess.run(pip + ["install", "-r", req_file], check=False)
+                        else:
+                            subprocess.run(pip + ["install", "-e", corridorkey_dir], check=False)
+
+                        result = subprocess.run(
+                            matching_python + ["-c", "import site; print(site.getusersitepackages())"],
+                            capture_output=True, text=True, check=False,
+                        )
+                        if result.returncode == 0:
+                            user_site = result.stdout.strip()
+                            if os.path.isdir(user_site):
+                                return user_site
+                        return None
 
         # Nothing worked
         print(f"\n  ERROR: Python {nuke_python_version} is not installed.")
