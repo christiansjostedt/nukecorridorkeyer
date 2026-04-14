@@ -158,12 +158,12 @@ def detect_nuke_python_version():
 
     for search_dir in search_dirs:
         try:
-            for entry in os.listdir(search_dir):
-                entry_lower = entry.lower()
-                if "nuke" not in entry_lower:
+            for entry in sorted(os.listdir(search_dir), reverse=True):
+                if "nuke" not in entry.lower():
                     continue
                 for nuke_major, py_ver in NUKE_PYTHON_VERSIONS.items():
                     if nuke_major in entry:
+                        print(f"  Auto-detected {entry} -> Python {py_ver}")
                         return py_ver
         except OSError:
             continue
@@ -203,6 +203,10 @@ def install_dependencies(corridorkey_dir, nuke_python_version=None):
         print(f"  System Python is {sys_version}, Nuke needs {nuke_python_version}")
         print(f"  Installing dependencies for Python {nuke_python_version}...")
         deps_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "nuke_deps")
+        # Clean out stale deps from previous installs
+        if os.path.isdir(deps_dir):
+            print(f"  Cleaning previous nuke_deps/...")
+            shutil.rmtree(deps_dir)
         os.makedirs(deps_dir, exist_ok=True)
         pip_platform = get_pip_platform()
 

@@ -8,3 +8,4 @@ build/
 *.swp
 *.swo
 corridor_keyer_cache/
+nuke_deps/
