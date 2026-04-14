@@ -89,18 +89,30 @@ def _node_to_numpy_via_temp(node, channels, frame):
     # Nuke on Windows requires forward slashes in file paths
     tmp_path = os.path.join(tmp_dir, "tmp.%04d.exr" % frame).replace("\\", "/")
 
+    write = None
     try:
-        write = nuke.nodes.Write(
-            file=tmp_path, file_type="exr", datatype="32 bit float",
-        )
-        write.setInput(0, node)
+        # Ensure we create the Write node at root level, not inside a gizmo
+        nuke.root().begin()
+        try:
+            write = nuke.nodes.Write(
+                file=tmp_path, file_type="exr", datatype="32 bit float",
+            )
+            write.setInput(0, node)
+        finally:
+            nuke.root().end()
+
         nuke.execute(write, frame, frame)
-        nuke.delete(write)
 
         exr_path = tmp_path.replace("%04d", "%04d" % frame)
         # Resolve back to OS path for file reading
         result = _read_exr(os.path.normpath(exr_path), channels)
     finally:
+        # Always clean up the Write node
+        if write is not None:
+            try:
+                nuke.delete(write)
+            except Exception:
+                pass
         # Clean up temp files immediately
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
