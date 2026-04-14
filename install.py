@@ -253,13 +253,13 @@ def install_dependencies(corridorkey_dir, nuke_python_version=None):
 
         # No matching Python found
         print(f"\n  ERROR: Python {nuke_python_version} is not installed.")
-        print(f"  Nuke {nuke_python_version.split('.')[0]}+ uses Python {nuke_python_version} internally,")
+        print(f"  Nuke uses Python {nuke_python_version} internally,")
         print(f"  but your system has Python {sys_version}.")
         print(f"\n  To fix this, install Python {nuke_python_version} from https://python.org/downloads/")
         if platform.system() == "Windows":
             print(f"  (Make sure to check 'Add to PATH' or use the 'py' launcher)")
         print(f"  Then re-run this installer.")
-        return None
+        return "FAILED"
 
     # Same version — install normally
     pip = find_pip()
@@ -484,13 +484,27 @@ def main():
 
     # 2. Install dependencies
     deps_dir = None
+    deps_failed = False
     if not clone_ok:
         print(f"\n[2/3] Skipping dependency install (CorridorKey not available)")
     elif not args.skip_deps:
         print(f"\n[2/3] Python dependencies")
         deps_dir = install_dependencies(corridorkey_dir, nuke_python)
+        if deps_dir == "FAILED":
+            deps_failed = True
+            deps_dir = None
     else:
         print(f"\n[2/3] Skipping dependency install")
+
+    if deps_failed:
+        # Don't patch init.py with wrong paths or report success
+        print("\n" + "=" * 60)
+        print("  Installation incomplete.")
+        print("=" * 60)
+        print(f"\n  Dependencies could not be installed.")
+        print(f"  Install Python {nuke_python} and re-run this installer.")
+        print()
+        sys.exit(1)
 
     # 3. Patch Nuke init
     print(f"\n[3/3] Configuring Nuke ({nuke_dir})")
