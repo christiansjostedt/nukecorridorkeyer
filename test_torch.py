@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""
+r"""
 Quick diagnostic to verify torch loads correctly.
 Run with the same Python that Nuke uses, or with any Python that has
 the CorridorKeyer dependencies installed.
