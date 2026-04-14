@@ -732,7 +732,6 @@ def _download_model(corridorkey_dir, nuke_python_version=None):
 
     # Find the right Python to run huggingface_hub
     python_cmd = None
-    # Try Nuke's Python first
     nuke_python_exe = _find_nuke_python()
     if nuke_python_exe:
         if " -t" in nuke_python_exe:
@@ -740,20 +739,19 @@ def _download_model(corridorkey_dir, nuke_python_version=None):
         else:
             python_cmd = [nuke_python_exe]
 
-    # Try matching Python
     if not python_cmd and nuke_python_version:
         matching = _find_matching_python(nuke_python_version)
         if matching:
             python_cmd = matching
 
-    # Fall back to system Python
     if not python_cmd:
         python_cmd = [sys.executable]
 
+    models_escaped = models_dir.replace(chr(92), "/")
     download_script = (
         "from huggingface_hub import hf_hub_download; "
-        f"hf_hub_download('nikopueringer/CorridorKey', 'CorridorKey.pth', "
-        f"local_dir=r'{models_dir.replace(chr(92), '/')}')"
+        f"hf_hub_download('nikopueringer/CorridorKey_v1.0', 'CorridorKey_v1.0.pth', "
+        f"local_dir=r'{models_escaped}')"
     )
 
     result = subprocess.run(
@@ -761,14 +759,19 @@ def _download_model(corridorkey_dir, nuke_python_version=None):
         check=False,
     )
 
-    if result.returncode == 0 and os.path.isfile(checkpoint):
+    # The downloaded file is CorridorKey_v1.0.pth, but the engine expects CorridorKey.pth
+    downloaded = os.path.join(models_dir, "CorridorKey_v1.0.pth")
+    if os.path.isfile(downloaded) and not os.path.isfile(checkpoint):
+        shutil.copy2(downloaded, checkpoint)
+
+    if os.path.isfile(checkpoint):
         size_mb = os.path.getsize(checkpoint) / (1024 * 1024)
-        print(f"  Model downloaded ({size_mb:.0f}MB)")
+        print(f"  Model ready ({size_mb:.0f}MB)")
     else:
         print(f"  WARNING: Model download failed.")
-        print(f"  You can download it manually:")
-        print(f"  1. Visit https://huggingface.co/nikopueringer/CorridorKey")
-        print(f"  2. Download CorridorKey.pth to {models_dir}")
+        print(f"  Download manually from:")
+        print(f"  https://huggingface.co/nikopueringer/CorridorKey_v1.0")
+        print(f"  Save CorridorKey_v1.0.pth as {checkpoint}")
 
 
 def _create_nuke_launcher(plugin_dir, deps_dir):
