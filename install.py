@@ -28,6 +28,7 @@ from urllib.error import URLError
 PLUGIN_NAME = "nukecorridorkeyer"
 CORRIDORKEY_REPO = "https://github.com/nikopueringer/CorridorKey.git"
 CORRIDORKEY_ZIP = "https://github.com/nikopueringer/CorridorKey/archive/refs/heads/main.zip"
+VCREDIST_URL = "https://aka.ms/vs/17/release/vc_redist.x64.exe"
 INIT_MARKER = "# --- CorridorKeyer plugin path (auto-added by installer) ---"
 
 # Known Nuke version -> Python version mapping
@@ -168,6 +169,50 @@ def detect_nuke_python_version():
         except OSError:
             continue
     return None
+
+
+def _ensure_vcredist_windows():
+    """Check for and install Visual C++ Redistributable on Windows."""
+    if platform.system() != "Windows":
+        return
+    # Check if vcruntime140_1.dll exists (installed by VS 2019/2022 redist)
+    import ctypes
+    try:
+        ctypes.WinDLL("vcruntime140_1.dll")
+        return  # already installed
+    except OSError:
+        pass
+
+    print("  Visual C++ Redistributable not found (required by PyTorch).")
+    print("  Downloading and installing...")
+    installer_path = os.path.join(os.environ.get("TEMP", "."), "vc_redist.x64.exe")
+    try:
+        try:
+            response = urlopen(VCREDIST_URL)
+        except URLError as e:
+            if "CERTIFICATE_VERIFY_FAILED" in str(e):
+                ctx = ssl.create_default_context()
+                ctx.check_hostname = False
+                ctx.verify_mode = ssl.CERT_NONE
+                response = urlopen(VCREDIST_URL, context=ctx)
+            else:
+                raise
+        with open(installer_path, "wb") as f:
+            f.write(response.read())
+
+        subprocess.run(
+            [installer_path, "/quiet", "/norestart"],
+            check=True, timeout=120,
+        )
+        print("  Visual C++ Redistributable installed.")
+    except (URLError, OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+        print(f"  WARNING: Could not install Visual C++ Redistributable: {e}")
+        print(f"  Install manually from: https://aka.ms/vs/17/release/vc_redist.x64.exe")
+    finally:
+        try:
+            os.remove(installer_path)
+        except OSError:
+            pass
 
 
 def _find_nuke_python():
@@ -656,6 +701,7 @@ def main():
         print(f"\n[2/3] Skipping dependency install (CorridorKey not available)")
     elif not args.skip_deps:
         print(f"\n[2/3] Python dependencies")
+        _ensure_vcredist_windows()
         deps_dir = install_dependencies(corridorkey_dir, nuke_python)
         if deps_dir == "FAILED":
             deps_failed = True
