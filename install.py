@@ -215,6 +215,37 @@ def _ensure_vcredist_windows():
             pass
 
 
+def _cleanup_wrong_version_packages(nuke_python_version):
+    """Remove torch packages from the system Python if version doesn't match Nuke's."""
+    if not nuke_python_version:
+        return
+    sys_version = f"{sys.version_info.major}.{sys.version_info.minor}"
+    if sys_version == nuke_python_version:
+        return
+
+    # Check if the system Python has torch installed — its DLLs conflict
+    pip = find_pip()
+    if pip is None:
+        return
+
+    # Check if torch is installed in the system Python
+    result = subprocess.run(
+        pip + ["show", "torch"],
+        capture_output=True, text=True, check=False,
+    )
+    if result.returncode != 0:
+        return  # torch not installed in system Python, nothing to clean
+
+    print(f"  Removing conflicting torch packages from Python {sys_version}...")
+    print(f"  (These DLLs interfere with Nuke's Python {nuke_python_version})")
+    for pkg in ["torch", "torchvision", "triton-windows", "triton"]:
+        subprocess.run(
+            pip + ["uninstall", "-y", pkg],
+            capture_output=True, check=False,
+        )
+    print(f"  Done — Python {sys_version} torch packages removed.")
+
+
 def _find_nuke_python():
     """Find Nuke's bundled Python executable on Windows."""
     if platform.system() != "Windows":
@@ -702,6 +733,8 @@ def main():
     elif not args.skip_deps:
         print(f"\n[2/3] Python dependencies")
         _ensure_vcredist_windows()
+        # Remove conflicting packages from the wrong Python version
+        _cleanup_wrong_version_packages(nuke_python)
         deps_dir = install_dependencies(corridorkey_dir, nuke_python)
         if deps_dir == "FAILED":
             deps_failed = True
