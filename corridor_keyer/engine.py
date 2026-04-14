@@ -10,6 +10,17 @@ import os
 import platform
 import sys
 import ctypes
+import types
+
+# Nuke's Python is missing some standard library C extensions (like _lzma)
+# that torchvision imports. Provide stubs so imports don't fail.
+for _missing_mod in ["_lzma", "lzma"]:
+    if _missing_mod not in sys.modules:
+        try:
+            __import__(_missing_mod)
+        except (ImportError, ModuleNotFoundError):
+            sys.modules[_missing_mod] = types.ModuleType(_missing_mod)
+
 import numpy as np
 
 
