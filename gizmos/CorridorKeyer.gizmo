@@ -8,7 +8,7 @@ Gizmo {
 
  addUserKnob {20 CorridorKeyer l "Corridor Keyer"}
 
- addUserKnob {26 title l "" +STARTLINE T "<font size='5' color='#4b8c3a'><b>Corridor Keyer</b></font>  <font size='2' color='#888'>v0.1.0</font>"}
+ addUserKnob {26 title l "" +STARTLINE T "<font size='5' color='#4b8c3a'><b>Corridor Keyer</b></font>  <font size='2' color='#888'>v0.1.2</font>"}
  addUserKnob {26 subtitle l "" +STARTLINE T "<font size='2' color='#999'>AI Green Screen Keyer by Corridor Digital</font>"}
  addUserKnob {26 div0 l "" +STARTLINE}
 
