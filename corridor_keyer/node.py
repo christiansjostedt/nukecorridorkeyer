@@ -165,8 +165,13 @@ def _write_exr(path, image, channel_names=None):
 
     try:
         import cv2
-        if image.ndim == 3 and image.shape[2] >= 3:
-            image = image[:, :, ::-1]  # RGB -> BGR for OpenCV
+        if image.ndim == 3:
+            if image.shape[2] == 4:
+                # RGBA -> BGRA for OpenCV
+                image = np.concatenate([image[:, :, 2:3], image[:, :, 1:2],
+                                        image[:, :, 0:1], image[:, :, 3:4]], axis=2)
+            elif image.shape[2] >= 3:
+                image = image[:, :, ::-1]  # RGB -> BGR for OpenCV
         cv2.imwrite(path, image.astype(np.float32))
         return
     except ImportError:
