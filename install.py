@@ -26,6 +26,7 @@ from urllib.error import URLError
 
 
 PLUGIN_NAME = "nukecorridorkeyer"
+PLUGIN_REPO_ZIP = "https://github.com/christiansjostedt/nukecorridorkeyer/archive/refs/heads/main.zip"
 CORRIDORKEY_REPO = "https://github.com/nikopueringer/CorridorKey.git"
 CORRIDORKEY_ZIP = "https://github.com/nikopueringer/CorridorKey/archive/refs/heads/main.zip"
 VCREDIST_URL = "https://aka.ms/vs/17/release/vc_redist.x64.exe"
@@ -37,6 +38,76 @@ NUKE_PYTHON_VERSIONS = {
     "14": "3.9",
     "13": "3.7",
 }
+
+
+def self_update(plugin_dir):
+    """Download the latest plugin code from GitHub and update local files."""
+    print("  Checking for updates...")
+    try:
+        try:
+            response = urlopen(PLUGIN_REPO_ZIP)
+        except URLError as e:
+            if "CERTIFICATE_VERIFY_FAILED" in str(e):
+                ctx = ssl.create_default_context()
+                ctx.check_hostname = False
+                ctx.verify_mode = ssl.CERT_NONE
+                response = urlopen(PLUGIN_REPO_ZIP, context=ctx)
+            else:
+                raise
+
+        zip_data = io.BytesIO(response.read())
+        with zipfile.ZipFile(zip_data) as zf:
+            # Find the top-level directory in the zip
+            top_dirs = {name.split("/")[0] for name in zf.namelist() if "/" in name}
+            zip_root = top_dirs.pop() if len(top_dirs) == 1 else None
+
+            # Update plugin files (corridor_keyer/, gizmos/, icons/, etc.)
+            update_dirs = ["corridor_keyer", "gizmos", "icons"]
+            update_files = ["init.py", "menu.py"]
+
+            for member in zf.namelist():
+                if zip_root and member.startswith(zip_root + "/"):
+                    rel_path = member[len(zip_root) + 1:]
+                else:
+                    rel_path = member
+                if not rel_path:
+                    continue
+
+                # Only update known plugin directories and files
+                should_update = False
+                for d in update_dirs:
+                    if rel_path.startswith(d + "/") or rel_path == d:
+                        should_update = True
+                        break
+                if rel_path in update_files:
+                    should_update = True
+
+                if not should_update:
+                    continue
+
+                dest = os.path.join(plugin_dir, rel_path)
+                if member.endswith("/"):
+                    os.makedirs(dest, exist_ok=True)
+                else:
+                    os.makedirs(os.path.dirname(dest), exist_ok=True)
+                    with zf.open(member) as src, open(dest, "wb") as dst:
+                        shutil.copyfileobj(src, dst)
+
+        # Read updated version
+        version_file = os.path.join(plugin_dir, "corridor_keyer", "__init__.py")
+        if os.path.exists(version_file):
+            with open(version_file, "r") as f:
+                for line in f:
+                    if "__version__" in line:
+                        print(f"  Updated to {line.strip()}")
+                        break
+        else:
+            print("  Updated plugin files.")
+        return True
+    except (URLError, OSError, zipfile.BadZipFile) as e:
+        print(f"  WARNING: Could not update: {e}")
+        print("  Continuing with existing files.")
+        return False
 
 
 def get_nuke_dir():
@@ -686,6 +757,10 @@ def main():
         remove_nuke_init_entry(nuke_dir)
         print("Done. Plugin files were not deleted — remove manually if desired.")
         return
+
+    # Self-update plugin code from GitHub
+    if not args.skip_deps:  # skip_deps implies offline/manual mode
+        self_update(plugin_dir)
 
     # Clean up any previous installation first
     remove_nuke_init_entry(nuke_dir)
