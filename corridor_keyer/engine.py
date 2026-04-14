@@ -7,11 +7,39 @@ to the cloned CorridorKey repo if it is not on sys.path.
 """
 
 import os
+import platform
 import sys
 import numpy as np
 
 _engine_instance = None
 _engine_img_size = None
+
+
+def _register_dll_directories():
+    """Register DLL search paths for packages in nuke_deps/ on Windows."""
+    if platform.system() != "Windows" or not hasattr(os, "add_dll_directory"):
+        return
+    # Find nuke_deps relative to this file's package
+    pkg_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    deps_dir = os.path.join(pkg_dir, "nuke_deps")
+    if not os.path.isdir(deps_dir):
+        return
+    # Register DLL directories for torch and other native packages
+    for lib_dir in [
+        os.path.join(deps_dir, "torch", "lib"),
+        os.path.join(deps_dir, "torchvision"),
+        os.path.join(deps_dir, "nvidia", "cudnn", "bin"),
+        os.path.join(deps_dir, "nvidia", "cuda_runtime", "bin"),
+    ]:
+        if os.path.isdir(lib_dir):
+            os.add_dll_directory(lib_dir)
+    # Also add to PATH as a fallback for older DLL loading
+    torch_lib = os.path.join(deps_dir, "torch", "lib")
+    if os.path.isdir(torch_lib):
+        os.environ["PATH"] = torch_lib + os.pathsep + os.environ.get("PATH", "")
+
+
+_register_dll_directories()
 
 
 def _ensure_corridorkey_on_path():
