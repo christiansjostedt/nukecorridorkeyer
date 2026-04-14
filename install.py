@@ -714,7 +714,77 @@ def remove_nuke_init_entry(nuke_dir):
     print(f"  Cleaned {init_path}")
 
 
-def print_summary(plugin_dir, corridorkey_dir, nuke_dir):
+def _create_nuke_launcher(plugin_dir, deps_dir):
+    """Create a batch file that launches Nuke with torch DLLs on PATH."""
+    if platform.system() != "Windows":
+        return None
+
+    # Find torch/lib
+    torch_lib = None
+    if deps_dir and os.path.isdir(deps_dir):
+        candidate = os.path.join(deps_dir, "torch", "lib")
+        if os.path.isdir(candidate):
+            torch_lib = candidate
+    if not torch_lib:
+        # Search common locations
+        try:
+            import site
+            for sp_func in [site.getusersitepackages, lambda: site.getsitepackages()]:
+                try:
+                    result = sp_func()
+                    if isinstance(result, str):
+                        result = [result]
+                    for sp in result:
+                        candidate = os.path.join(sp, "torch", "lib")
+                        if os.path.isdir(candidate):
+                            torch_lib = candidate
+                            break
+                except Exception:
+                    continue
+                if torch_lib:
+                    break
+        except Exception:
+            pass
+    # Also check Python310 user site-packages directly
+    if not torch_lib:
+        user_profile = os.environ.get("USERPROFILE", "")
+        for pyver in ["Python310", "Python311", "Python39"]:
+            candidate = os.path.join(user_profile, "AppData", "Roaming", "Python", pyver, "site-packages", "torch", "lib")
+            if os.path.isdir(candidate):
+                torch_lib = candidate
+                break
+
+    if not torch_lib:
+        return None
+
+    # Find Nuke executable
+    nuke_exe = None
+    prog = os.environ.get("PROGRAMFILES", r"C:\Program Files")
+    if os.path.isdir(prog):
+        for entry in sorted(os.listdir(prog), reverse=True):
+            if "nuke" not in entry.lower():
+                continue
+            nuke_dir = os.path.join(prog, entry)
+            for f in sorted(os.listdir(nuke_dir)):
+                if f.lower().endswith(".exe") and "nuke" in f.lower() and "python" not in f.lower():
+                    nuke_exe = os.path.join(nuke_dir, f)
+                    break
+            if nuke_exe:
+                break
+
+    if not nuke_exe:
+        return None
+
+    bat_path = os.path.join(plugin_dir, "Launch_Nuke_CorridorKeyer.bat")
+    with open(bat_path, "w") as f:
+        f.write(f'@echo off\n')
+        f.write(f'set "PATH={torch_lib};%PATH%"\n')
+        f.write(f'start "" "{nuke_exe}" %*\n')
+
+    return bat_path
+
+
+def print_summary(plugin_dir, corridorkey_dir, nuke_dir, launcher_bat=None):
     """Print post-install summary."""
     print("\n" + "=" * 60)
     print("  CorridorKeyer installed successfully!")
@@ -722,8 +792,17 @@ def print_summary(plugin_dir, corridorkey_dir, nuke_dir):
     print(f"\n  Plugin:      {plugin_dir}")
     print(f"  CorridorKey: {corridorkey_dir}")
     print(f"  Nuke config: {nuke_dir}")
+
+    if launcher_bat:
+        print(f"\n  IMPORTANT: Use this shortcut to launch Nuke:")
+        print(f"  {launcher_bat}")
+        print(f"  (This sets up torch's DLLs before Nuke starts)")
+
     print("\n  Next steps:")
-    print("  1. Launch Nuke")
+    if launcher_bat:
+        print("  1. Launch Nuke using the batch file above")
+    else:
+        print("  1. Launch Nuke")
     print("  2. Find 'CorridorKeyer' in the toolbar or Tab menu")
     print("  3. Connect your plate and a rough alpha hint")
     print("  4. Hit 'Process Current Frame' or enable Live preview")
@@ -732,10 +811,6 @@ def print_summary(plugin_dir, corridorkey_dir, nuke_dir):
     if system == "Darwin":
         print("\n  macOS note: MPS (Metal) is auto-detected for Apple Silicon.")
         print("  Set CORRIDORKEY_DEVICE=cpu to force CPU if you hit MPS issues.")
-    elif system == "Windows":
-        print("\n  Windows note: CUDA is auto-detected for NVIDIA GPUs.")
-        print("  If Nuke's Python can't find torch, you may need to add your")
-        print("  Python site-packages to NUKE_PATH or PYTHONPATH.")
 
     print()
 
@@ -863,7 +938,10 @@ def main():
         print()
         sys.exit(1)
 
-    print_summary(plugin_dir, corridorkey_dir, nuke_dir)
+    # Create Nuke launcher batch file on Windows
+    launcher_bat = _create_nuke_launcher(plugin_dir, deps_dir)
+
+    print_summary(plugin_dir, corridorkey_dir, nuke_dir, launcher_bat)
 
 
 if __name__ == "__main__":
