@@ -170,80 +170,111 @@ def detect_nuke_python_version():
     return None
 
 
-def get_pip_platform():
-    """Return the pip platform string for the current OS."""
-    system = platform.system()
-    machine = platform.machine().lower()
-    if system == "Windows":
-        if machine in ("amd64", "x86_64"):
-            return "win_amd64"
-        return "win32"
-    elif system == "Darwin":
-        if machine == "arm64":
-            return "macosx_11_0_arm64"
-        return "macosx_10_9_x86_64"
-    else:
-        if machine in ("x86_64", "amd64"):
-            return "manylinux2014_x86_64"
-        return f"manylinux2014_{machine}"
+def _find_matching_python(version):
+    """
+    Find a Python executable matching the given version string (e.g. '3.10').
+    Returns the command as a list, or None.
+    """
+    candidates = []
+    if platform.system() == "Windows":
+        # Windows Python Launcher
+        candidates.append(["py", f"-{version}"])
+    candidates.append([f"python{version}"])
+    candidates.append([f"python{version.replace('.', '')}"])
+
+    for cmd in candidates:
+        try:
+            result = subprocess.run(
+                cmd + ["--version"],
+                capture_output=True, text=True, check=True,
+            )
+            if version in result.stdout:
+                return cmd
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            continue
+    return None
+
+
+def _find_pip_for_python(python_cmd):
+    """Find pip for a specific Python executable."""
+    try:
+        subprocess.run(
+            python_cmd + ["-m", "pip", "--version"],
+            capture_output=True, check=True,
+        )
+        return python_cmd + ["-m", "pip"]
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return None
 
 
 def install_dependencies(corridorkey_dir, nuke_python_version=None):
     """Install CorridorKey's Python dependencies."""
+    sys_version = f"{sys.version_info.major}.{sys.version_info.minor}"
+    version_mismatch = nuke_python_version and nuke_python_version != sys_version
+
+    if version_mismatch:
+        print(f"  System Python is {sys_version}, Nuke needs {nuke_python_version}")
+
+        # Try to find a matching Python on the system
+        matching_python = _find_matching_python(nuke_python_version)
+        if matching_python:
+            print(f"  Found matching Python: {' '.join(matching_python)}")
+            pip = _find_pip_for_python(matching_python)
+            if pip:
+                print(f"  Installing dependencies using Python {nuke_python_version}...")
+                req_file = os.path.join(corridorkey_dir, "requirements.txt")
+                if os.path.exists(req_file):
+                    subprocess.run(pip + ["install", "-r", req_file], check=False)
+                else:
+                    subprocess.run(pip + ["install", "-e", corridorkey_dir], check=False)
+
+                # Find where pip installed the packages
+                result = subprocess.run(
+                    matching_python + ["-c", "import site; print(site.getusersitepackages())"],
+                    capture_output=True, text=True, check=False,
+                )
+                if result.returncode == 0:
+                    user_site = result.stdout.strip()
+                    if os.path.isdir(user_site):
+                        return user_site
+
+                # Try global site-packages
+                result = subprocess.run(
+                    matching_python + ["-c", "import site; print('\\n'.join(site.getsitepackages()))"],
+                    capture_output=True, text=True, check=False,
+                )
+                if result.returncode == 0:
+                    for sp in result.stdout.strip().splitlines():
+                        if os.path.isdir(sp):
+                            return sp
+                return None
+            else:
+                print(f"  WARNING: Python {nuke_python_version} found but pip not available")
+
+        # No matching Python found
+        print(f"\n  ERROR: Python {nuke_python_version} is not installed.")
+        print(f"  Nuke {nuke_python_version.split('.')[0]}+ uses Python {nuke_python_version} internally,")
+        print(f"  but your system has Python {sys_version}.")
+        print(f"\n  To fix this, install Python {nuke_python_version} from https://python.org/downloads/")
+        if platform.system() == "Windows":
+            print(f"  (Make sure to check 'Add to PATH' or use the 'py' launcher)")
+        print(f"  Then re-run this installer.")
+        return None
+
+    # Same version — install normally
     pip = find_pip()
     if pip is None:
         print("  WARNING: pip not found. Install dependencies manually:")
         print(f"    pip install -e {corridorkey_dir}")
         return None
 
-    sys_version = f"{sys.version_info.major}.{sys.version_info.minor}"
-    cross_install = nuke_python_version and nuke_python_version != sys_version
-
-    if cross_install:
-        print(f"  System Python is {sys_version}, Nuke needs {nuke_python_version}")
-        print(f"  Installing dependencies for Python {nuke_python_version}...")
-        deps_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "nuke_deps")
-        # Clean out stale deps from previous installs
-        if os.path.isdir(deps_dir):
-            print(f"  Cleaning previous nuke_deps/...")
-            shutil.rmtree(deps_dir)
-        os.makedirs(deps_dir, exist_ok=True)
-        pip_platform = get_pip_platform()
-
-        req_file = os.path.join(corridorkey_dir, "requirements.txt")
-        if os.path.exists(req_file):
-            install_args = ["-r", req_file]
-        else:
-            install_args = [corridorkey_dir]
-
-        subprocess.run(
-            pip + ["install"] + install_args + [
-                "--target", deps_dir,
-                "--python-version", nuke_python_version,
-                "--platform", pip_platform,
-                "--only-binary", ":all:",
-            ],
-            check=False,
-        )
-        # Also install corridorkey source into the target dir
-        subprocess.run(
-            pip + ["install", corridorkey_dir,
-                   "--target", deps_dir,
-                   "--python-version", nuke_python_version,
-                   "--platform", pip_platform,
-                   "--only-binary", ":all:",
-                   "--no-deps"],
-            check=False,
-        )
-        return deps_dir
+    print("  Installing CorridorKey Python dependencies...")
+    req_file = os.path.join(corridorkey_dir, "requirements.txt")
+    if os.path.exists(req_file):
+        subprocess.run(pip + ["install", "-r", req_file], check=False)
     else:
-        print("  Installing CorridorKey Python dependencies...")
-        req_file = os.path.join(corridorkey_dir, "requirements.txt")
-        if os.path.exists(req_file):
-            subprocess.run(pip + ["install", "-r", req_file], check=False)
-        else:
-            subprocess.run(pip + ["install", "-e", corridorkey_dir], check=False)
-        return None
+        subprocess.run(pip + ["install", "-e", corridorkey_dir], check=False)
+    return None
 
 
 def patch_nuke_init(nuke_dir, plugin_dir, corridorkey_dir, deps_dir=None):
