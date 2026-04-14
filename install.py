@@ -724,13 +724,18 @@ def _install_cuda_torch(pip, python_cmd):
     if platform.system() not in ("Windows", "Linux"):
         return  # macOS uses MPS, not CUDA
 
-    # Check if CUDA torch is already installed
+    # Check if CUDA torch is already installed AND working for this GPU
     result = subprocess.run(
-        python_cmd + ["-c", "import torch; print(torch.cuda.is_available())"],
+        python_cmd + ["-c",
+            "import torch; "
+            "assert torch.cuda.is_available(); "
+            "torch.zeros(1, device='cuda');"  # actually test the GPU
+            "print('OK')"
+        ],
         capture_output=True, text=True, check=False,
     )
-    if result.returncode == 0 and "True" in result.stdout:
-        print(f"  CUDA torch already installed.")
+    if result.returncode == 0 and "OK" in result.stdout:
+        print(f"  CUDA torch already installed and working.")
         return
 
     # Check for NVIDIA GPU
